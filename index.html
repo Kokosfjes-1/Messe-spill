@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Dodge</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: none; }
+  .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 16px; left: 16px; z-index: 2; pointer-events: none; }
+  /* crop away the empty padding in the source image (960x367, text ≈ x30–930, y108–258) */
+  .logo .crop { position: relative; overflow: hidden; height: var(--h); width: calc(var(--h) * 6); }
+  .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="logo"><div class="crop"><img src="img/ikomm.png" alt="IKOMM"></div></div>
+<script>
+// ---------------- TUNING ----------------
+// All distances are in "units": 1 unit = 1% of the shorter screen side,
+// so difficulty is the same on a phone and on a big booth monitor.
+const CFG = {
+  graceTime: 1.5,          // seconds before first enemy
+  playerRadius: 2.0,
+  playerMaxSpeed: 70,      // units/sec – capped so you can't teleport away
+  keyboardSpeed: 70,       // units/sec when steering with arrow keys / WASD
+  hitboxForgiveness: 0.75, // collision uses 75% of drawn size (feels fair)
+
+  // spawn rate (enemies/sec) = base + growth * t^power
+  spawnBase: 1.1,
+  spawnGrowth: 0.0022,
+  spawnPower: 2.0,         // 10s ≈ 1.3/s, 30s ≈ 3.1/s, 60s ≈ 9/s
+
+  // enemy speed (units/sec) = base * (1 + t / speedDoubleTime)
+  enemySpeedBase: 24,
+  speedDoubleTime: 48,     // 48s → 2x speed, 60s → 2.25x
+
+  aimedShare: 0.65,        // fraction of enemies aimed at you (rest cross randomly)
+  aimSpread: 0.35,         // radians of random error on aimed shots
+  dartsFrom: 20,           // after this many seconds, fast "darts" appear
+  dartChance: 0.15,
+  burstsFrom: 35,          // after this, occasional fan bursts
+  burstEvery: 6,           // seconds between bursts
+};
+// ----------------------------------------
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W, H, U, dpr;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  W = innerWidth; H = innerHeight; U = Math.min(W, H) / 100;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+let best = 0;
+try { best = parseFloat(localStorage.getItem('dodge-best')) || 0; } catch (e) {}
+
+let state = 'menu'; // menu | play | over
+let t = 0, spawnAcc = 0, burstTimer = 0, overAt = 0, newBest = false;
+let enemies = [], particles = [];
+const player = { x: 0, y: 0, tx: 0, ty: 0 };
+const keys = {};
+
+// sandbox / test mode (type "ppa4" during a game)
+const SECRET = 'ppa4';
+let typed = '', sandbox = false, paused = false, timeScale = 1, showHitboxes = true, freezeTime = false, frozen = false, hits = 0, fps = 60;
+const TIME_SCALES = [0.1, 0.25, 0.5, 1, 2];
+
+function enterSandbox() {
+  sandbox = true; paused = false; timeScale = 1; showHitboxes = true; freezeTime = false; frozen = false; hits = 0;
+}
+function exitSandbox() {
+  sandbox = false; paused = false; state = 'menu'; enemies = []; particles = []; t = 0;
+}
+
+function sandboxKey(k) {
+  if (k === ' ') paused = !paused;
+  else if (k === 'h') showHitboxes = !showHitboxes;
+  else if (k === 'f') frozen = !frozen;
+  else if (k === 't') freezeTime = !freezeTime;
+  else if (k === 'c') enemies = [];
+  else if (k === 'b') burst();
+  else if (k === 'x') spawn('dart');
+  else if (k === 'n') spawn('normal');
+  else if (k === 'r') hits = 0;
+  else if (k === '+' || k === '=') t += 10;
+  else if (k === '-') t = Math.max(0, t - 10);
+  else if (k === '[' || k === ']') {
+    const i = TIME_SCALES.indexOf(timeScale) + (k === ']' ? 1 : -1);
+    timeScale = TIME_SCALES[Math.max(0, Math.min(TIME_SCALES.length - 1, i))];
+  }
+  else if (k === 'escape') exitSandbox();
+}
+
+function reset() {
+  t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
+  player.x = player.tx = W / 2; player.y = player.ty = H / 2;
+  state = 'play'; newBest = false;
+}
+
+// ---------- input ----------
+let pointerType = 'mouse', lastTouch = null;
+cv.addEventListener('pointerdown', e => {
+  pointerType = e.pointerType;
+  lastTouch = { x: e.clientX, y: e.clientY };
+  if (state === 'menu') reset();
+  else if (state === 'over' && performance.now() - overAt > 900) reset();
+  if (pointerType === 'mouse') { player.tx = e.clientX; player.ty = e.clientY; }
+});
+cv.addEventListener('pointermove', e => {
+  pointerType = e.pointerType;
+  if (e.pointerType === 'mouse') { player.tx = e.clientX; player.ty = e.clientY; }
+  else if (lastTouch) {
+    // touch: relative drag so your finger never hides the player
+    player.tx += (e.clientX - lastTouch.x) * 1.3;
+    player.ty += (e.clientY - lastTouch.y) * 1.3;
+    lastTouch = { x: e.clientX, y: e.clientY };
+  }
+});
+addEventListener('pointerup', () => { lastTouch = null; });
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  typed = (typed + k).slice(-SECRET.length);
+  if (typed === SECRET && state === 'play') {
+    typed = '';
+    sandbox ? exitSandbox() : enterSandbox();
+    return;
+  }
+  if (sandbox && state === 'play') { sandboxKey(k); return; }
+  if ((e.key === ' ' || e.key === 'Enter') && (state === 'menu' || (state === 'over' && performance.now() - overAt > 900))) reset();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// ---------- difficulty ----------
+const spawnRate = t => CFG.spawnBase + CFG.spawnGrowth * Math.pow(t, CFG.spawnPower);
+const enemySpeed = t => CFG.enemySpeedBase * (1 + t / CFG.speedDoubleTime);
+
+function edgePoint() {
+  const m = 4 * U, side = Math.random() * 4 | 0;
+  if (side === 0) return { x: Math.random() * W, y: -m };
+  if (side === 1) return { x: W + m, y: Math.random() * H };
+  if (side === 2) return { x: Math.random() * W, y: H + m };
+  return { x: -m, y: Math.random() * H };
+}
+
+function spawn(kind) {
+  const p = edgePoint();
+  let ang;
+  if (kind === 'dart' || Math.random() < CFG.aimedShare) {
+    ang = Math.atan2(player.y - p.y, player.x - p.x) + (Math.random() - 0.5) * 2 * CFG.aimSpread * (kind === 'dart' ? 0.4 : 1);
+  } else {
+    // aim at a random point in the middle area so it crosses the screen
+    const tx = W * (0.2 + Math.random() * 0.6), ty = H * (0.2 + Math.random() * 0.6);
+    ang = Math.atan2(ty - p.y, tx - p.x);
+  }
+  const dart = kind === 'dart';
+  const sp = enemySpeed(t) * U * (dart ? 1.9 : 0.8 + Math.random() * 0.4);
+  enemies.push({
+    x: p.x, y: p.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+    r: (dart ? 1.2 : 1.5 + Math.random() * 1.3) * U, dart, born: t,
+  });
+}
+
+function burst() {
+  const p = edgePoint();
+  const base = Math.atan2(player.y - p.y, player.x - p.x);
+  const n = 5, gap = 0.22, sp = enemySpeed(t) * U * 0.9;
+  for (let i = 0; i < n; i++) {
+    const a = base + (i - (n - 1) / 2) * gap;
+    enemies.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t });
+  }
+}
+
+// ---------- loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (dt > 0) fps += (1 / dt - fps) * 0.05;
+  if (state === 'play') { if (!(sandbox && paused)) update(sandbox ? dt * timeScale : dt); }
+  else updateParticles(dt);
+  draw(now);
+  requestAnimationFrame(frame);
+}
+
+function update(dt) {
+  const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
+  if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
+
+  // keyboard moves the target at a fixed speed
+  const kx = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+  const ky = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
+  if (kx || ky) {
+    const l = Math.hypot(kx, ky);
+    player.tx += kx / l * CFG.keyboardSpeed * U * dt;
+    player.ty += ky / l * CFG.keyboardSpeed * U * dt;
+  }
+
+  const pr = CFG.playerRadius * U;
+  player.tx = Math.max(pr, Math.min(W - pr, player.tx));
+  player.ty = Math.max(pr, Math.min(H - pr, player.ty));
+  const dx = player.tx - player.x, dy = player.ty - player.y, d = Math.hypot(dx, dy);
+  const maxStep = CFG.playerMaxSpeed * U * dt;
+  if (d > maxStep) { player.x += dx / d * maxStep; player.y += dy / d * maxStep; }
+  else { player.x = player.tx; player.y = player.ty; }
+
+  // spawning
+  if (t > CFG.graceTime && !worldFrozen) {
+    spawnAcc += spawnRate(t) * dt;
+    while (spawnAcc >= 1) {
+      spawnAcc -= 1;
+      spawn(t > CFG.dartsFrom && Math.random() < CFG.dartChance ? 'dart' : 'normal');
+    }
+    if (t > CFG.burstsFrom) {
+      burstTimer += dt;
+      if (burstTimer >= CFG.burstEvery) { burstTimer = 0; burst(); }
+    }
+  }
+
+  // move enemies, collide
+  const m = 10 * U;
+  for (const e of enemies) {
+    if (!worldFrozen) { e.x += e.vx * dt; e.y += e.vy * dt; }
+    if (Math.hypot(e.x - player.x, e.y - player.y) < (e.r + pr) * CFG.hitboxForgiveness) {
+      if (!sandbox) return die();
+      if (!e.hit) { e.hit = true; hits++; }
+      e.flash = 0.3;
+    }
+    if (e.flash) e.flash = Math.max(0, e.flash - dt);
+  }
+  enemies = enemies.filter(e => e.x > -m && e.x < W + m && e.y > -m && e.y < H + m);
+  updateParticles(dt);
+}
+
+function die() {
+  state = 'over'; overAt = performance.now();
+  if (t > best) { best = t; newBest = true; try { localStorage.setItem('dodge-best', best); } catch (e) {} }
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2, s = (20 + Math.random() * 60) * U;
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 });
+  }
+}
+
+function updateParticles(dt) {
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.94; p.vy *= 0.94; p.life -= dt * 1.2; }
+  particles = particles.filter(p => p.life > 0);
+}
+
+// ---------- drawing ----------
+function stageColor(t) {
+  // calm blue → purple → red as it gets harder
+  if (t < 60) {
+    const k = t / 60;
+    return `hsl(${225 - 225 * k}, 45%, ${7 + k * 4}%)`;
+  }
+  // past the minute: red that pulses faster the longer you last
+  const pulse = 0.5 + 0.5 * Math.sin(t * (4 + (t - 60) * 0.1));
+  return `hsl(0, ${45 + pulse * 20}%, ${11 + pulse * 5}%)`;
+}
+
+function text(str, x, y, size, color, weight = 700) {
+  ctx.font = `${weight} ${size}px system-ui, -apple-system, Segoe UI, sans-serif`;
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(str, x, y);
+}
+
+function draw(now) {
+  ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(t);
+  ctx.fillRect(0, 0, W, H);
+
+  // enemies
+  for (const e of enemies) {
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+    ctx.fillStyle = e.flash ? '#ffffff' : e.dart ? '#ffd23f' : e.burst ? '#ff7ad9' : '#ff4d5e';
+    ctx.fill();
+    if (e.dart) { // little trail so darts read as fast
+      ctx.strokeStyle = 'rgba(255,210,63,0.35)'; ctx.lineWidth = e.r;
+      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x - e.vx * 0.08, e.y - e.vy * 0.08); ctx.stroke();
+    }
+  }
+
+  // player
+  if (state === 'play') {
+    ctx.beginPath(); ctx.arc(player.x, player.y, CFG.playerRadius * U, 0, Math.PI * 2);
+    ctx.fillStyle = '#5ef2c2'; ctx.shadowColor = '#5ef2c2'; ctx.shadowBlur = 18; ctx.fill(); ctx.shadowBlur = 0;
+  }
+  if (sandbox && state === 'play') drawSandbox();
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = '#5ef2c2'; ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+  }
+  ctx.globalAlpha = 1;
+
+  const S = Math.min(W, H);
+  if (state === 'play' && sandbox) {
+    text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
+  } else if (state === 'play') {
+    text(t.toFixed(1), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
+    if (best > 0) text(`best ${best.toFixed(1)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+  } else if (state === 'menu') {
+    text('DODGE', W / 2, H / 2 - S * 0.14, S * 0.14, '#fff', 900);
+    text('Move. Don’t get hit.', W / 2, H / 2, S * 0.045, 'rgba(255,255,255,0.8)', 500);
+    text('Can you survive 60 seconds?', W / 2, H / 2 + S * 0.07, S * 0.035, '#ffd23f', 600);
+    const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+    text('tap / click / space to start', W / 2, H / 2 + S * 0.2, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+  } else if (state === 'over') {
+    text(t.toFixed(1) + 's', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
+    text(verdict(t), W / 2, H / 2 + S * 0.05, S * 0.045, '#ffd23f', 600);
+    text(newBest ? 'NEW BEST!' : `best ${best.toFixed(1)}s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
+    if (performance.now() - overAt > 900) {
+      const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+      text('tap to play again', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+    }
+  }
+}
+
+function drawSandbox() {
+  const f = CFG.hitboxForgiveness, pr = CFG.playerRadius * U;
+  if (showHitboxes) {
+    ctx.lineWidth = 1.5;
+    // collision happens when two dashed circles touch
+    ctx.setLineDash([4, 3]);
+    for (const e of enemies) {
+      ctx.strokeStyle = e.hit ? '#ffffff' : '#7fd1ff';
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.r * f, 0, Math.PI * 2); ctx.stroke();
+      // velocity: where it will be in 0.5s
+      ctx.strokeStyle = 'rgba(127,209,255,0.35)';
+      ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x + e.vx * 0.5, e.y + e.vy * 0.5); ctx.stroke();
+    }
+    ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(player.x, player.y, pr * f, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // where the player is heading (target), shows speed-cap lag
+    ctx.strokeStyle = 'rgba(94,242,194,0.5)';
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.tx, player.ty); ctx.stroke();
+    ctx.beginPath(); ctx.arc(player.tx, player.ty, 4, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  const lines = [
+    `time        ${t.toFixed(1)}s${freezeTime ? '  (locked)' : ''}`,
+    `spawn rate  ${spawnRate(t).toFixed(2)}/s`,
+    `enemy speed ${enemySpeed(t).toFixed(1)} u/s  (you: ${CFG.playerMaxSpeed})`,
+    `darts       ${t > CFG.dartsFrom ? 'on' : 'from ' + CFG.dartsFrom + 's'}`,
+    `bursts      ${t > CFG.burstsFrom ? 'on' : 'from ' + CFG.burstsFrom + 's'}`,
+    `enemies     ${enemies.length}`,
+    `hits taken  ${hits}`,
+    `game speed  ${timeScale}x${paused ? '  PAUSED' : ''}${frozen ? '  FROZEN' : ''}`,
+    `fps         ${fps.toFixed(0)}`,
+    ``,
+    `space pause    [ ] game speed`,
+    `F freeze world (you can move)`,
+    `+ / -  time ±10s   T lock time`,
+    `N enemy  X dart  B burst  C clear`,
+    `H hitboxes  R reset hits`,
+    `Esc or ppa4  exit`,
+  ];
+  const size = Math.max(11, Math.min(14, U * 1.6)), lh = size * 1.45;
+  // top-right, so it doesn't cover the logo
+  const pw = size * 22, px = W - pw - 10;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(px, 10, pw, lines.length * lh + 16);
+  ctx.font = `500 ${size}px ui-monospace, Menlo, Consolas, monospace`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#e6edf3';
+  lines.forEach((l, i) => ctx.fillText(l, px + 8, 18 + i * lh));
+}
+
+function verdict(t) {
+  if (t < 10) return 'Warming up…';
+  if (t < 20) return 'Not bad!';
+  if (t < 30) return 'Solid!';
+  if (t < 40) return 'Impressive!';
+  if (t < 50) return 'Elite reflexes!';
+  if (t < 60) return 'So close to legendary!';
+  if (t < 75) return 'LEGENDARY — you beat the minute!';
+  if (t < 90) return 'Are you even human?';
+  return 'Absolutely unreal.';
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
