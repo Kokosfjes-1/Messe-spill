@@ -11,11 +11,45 @@
   /* crop away the empty padding in the source image (960x367, text ≈ x30–930, y108–258) */
   .logo .crop { position: relative; overflow: hidden; height: var(--h); width: calc(var(--h) * 6); }
   .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
+  /* score form shown after each run */
+  #submit { position: fixed; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
+            padding: 16px; background: rgba(5,7,12,0.6); font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #e6edf3; }
+  #submit[hidden] { display: none; }
+  #submit form { box-sizing: border-box; width: min(420px, 100%); background: #151a24; border: 1px solid #2a3242; border-radius: 16px;
+                 padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); text-align: center; user-select: text; -webkit-user-select: text; }
+  #submit .time { font-size: 56px; font-weight: 900; line-height: 1; color: #fff; }
+  #submit .verdict { color: #ffd23f; font-weight: 600; margin: 8px 0 20px; }
+  #submit p { margin: 0 0 12px; color: #b6c0cf; font-size: 15px; }
+  #submit input[type=tel] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px; border-radius: 10px;
+                            border: 1px solid #3a4558; background: #0b0d12; color: #fff; text-align: center; letter-spacing: 1px; }
+  #submit input[type=tel]:focus { outline: 2px solid #5ef2c2; border-color: transparent; }
+  #submit label { display: flex; gap: 10px; align-items: flex-start; text-align: left; font-size: 13px; color: #9aa6b8; margin: 14px 0 18px; cursor: pointer; }
+  #submit label input { width: 20px; height: 20px; flex: none; margin: 0; accent-color: #5ef2c2; }
+  #submit .buttons { display: flex; gap: 10px; }
+  #submit button { flex: 1; font: inherit; font-weight: 700; font-size: 16px; padding: 13px; border-radius: 10px; border: 0; cursor: pointer; }
+  #submit button.primary { background: #5ef2c2; color: #062018; }
+  #submit button.ghost { background: transparent; color: #b6c0cf; border: 1px solid #3a4558; }
+  #submit button:disabled { opacity: 0.5; cursor: default; }
+  #submit .status { min-height: 20px; margin-top: 12px; font-size: 14px; color: #ffd23f; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div class="logo"><div class="crop"><img src="img/ikomm.png" alt="IKOMM"></div></div>
+<div id="submit" hidden>
+  <form novalidate>
+    <div class="time" id="s-time">0.0s</div>
+    <div class="verdict" id="s-verdict"></div>
+    <p>Enter your phone number to join the competition. We'll contact the winner.</p>
+    <input type="tel" id="s-phone" inputmode="tel" autocomplete="off" placeholder="Phone number" maxlength="20">
+    <label><input type="checkbox" id="s-consent"> I agree that my phone number is stored so the winner can be contacted. It is deleted after the event and never shown on screen.</label>
+    <div class="buttons">
+      <button type="button" class="ghost" id="s-skip">Skip</button>
+      <button type="submit" class="primary" id="s-send">Submit</button>
+    </div>
+    <div class="status" id="s-status"></div>
+  </form>
+</div>
 <script>
 // ---------------- TUNING ----------------
 // All distances are in "units": 1 unit = 1% of the shorter screen side,
@@ -123,6 +157,7 @@ cv.addEventListener('pointermove', e => {
 });
 addEventListener('pointerup', () => { lastTouch = null; });
 addEventListener('keydown', e => {
+  if (formOpen) return;
   const k = e.key.toLowerCase();
   keys[k] = true;
   typed = (typed + k).slice(-SECRET.length);
@@ -243,6 +278,7 @@ function die() {
     const a = Math.random() * Math.PI * 2, s = (20 + Math.random() * 60) * U;
     particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 });
   }
+  setTimeout(openForm, 700);
 }
 
 function updateParticles(dt) {
@@ -302,12 +338,17 @@ function draw(now) {
     text(t.toFixed(1), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
     if (best > 0) text(`best ${best.toFixed(1)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
   } else if (state === 'menu') {
-    text('DODGE', W / 2, H / 2 - S * 0.14, S * 0.14, '#fff', 900);
-    text('Move. Don’t get hit.', W / 2, H / 2, S * 0.045, 'rgba(255,255,255,0.8)', 500);
-    text('Can you survive 60 seconds?', W / 2, H / 2 + S * 0.07, S * 0.035, '#ffd23f', 600);
+    text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
+    text('Move. Don’t get hit.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
+    text('Can you survive 60 seconds?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
     const pulse = 0.5 + 0.5 * Math.sin(now / 300);
-    text('tap / click / space to start', W / 2, H / 2 + S * 0.2, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
-  } else if (state === 'over') {
+    text('tap / click / space to start', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+    if (top3.length) {
+      text('TOP 3', W / 2, H / 2 + S * 0.2, S * 0.03, 'rgba(255,255,255,0.5)', 800);
+      const medal = ['#ffd23f', '#d6dde8', '#e0995e'];
+      top3.forEach((r, i) => text(`${i + 1}.  ${r.time.toFixed(1)}s`, W / 2, H / 2 + S * (0.26 + i * 0.055), S * 0.04, medal[i], 800));
+    }
+  } else if (state === 'over' && !formOpen) {
     text(t.toFixed(1) + 's', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
     text(verdict(t), W / 2, H / 2 + S * 0.05, S * 0.045, '#ffd23f', 600);
     text(newBest ? 'NEW BEST!' : `best ${best.toFixed(1)}s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
@@ -367,6 +408,81 @@ function drawSandbox() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#e6edf3';
   lines.forEach((l, i) => ctx.fillText(l, px + 8, 18 + i * lh));
 }
+
+// ---------- scores (Azure API) ----------
+// Runs are queued in localStorage first, so nothing is lost if the booth wifi drops.
+const API = 'api';
+let top3 = [], formOpen = false;
+const $ = id => document.getElementById(id);
+
+function normalizePhone(raw) { // same rules as api/src/shared.js
+  let p = raw.replace(/[\s\-().]/g, '');
+  if (p.startsWith('00')) p = '+' + p.slice(2);
+  if (/^\d{8}$/.test(p)) p = '+47' + p;
+  return /^\+\d{8,15}$/.test(p) ? p : null;
+}
+
+function loadPending() { try { return JSON.parse(localStorage.getItem('dodge-pending')) || []; } catch (e) { return []; } }
+function savePending(list) { try { localStorage.setItem('dodge-pending', JSON.stringify(list)); } catch (e) {} }
+
+// returns true if everything queued has reached the server; only one flush runs at a time
+let flushing = null;
+function flushPending() { return flushing || (flushing = doFlush().finally(() => { flushing = null; })); }
+async function doFlush() {
+  let list = loadPending();
+  while (list.length) {
+    try {
+      const res = await fetch(`${API}/score`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list[0]) });
+      if (!res.ok && res.status !== 400) return false; // server trouble: keep it, retry later
+    } catch (e) { return false; }                       // offline: keep it, retry later
+    list = loadPending().slice(1); savePending(list);   // sent (or rejected as invalid): drop it
+  }
+  return true;
+}
+
+async function loadTop() {
+  try {
+    const res = await fetch(`${API}/top`, { cache: 'no-store' });
+    if (res.ok) top3 = await res.json();
+  } catch (e) {}
+}
+
+function openForm() {
+  if (state !== 'over') return;
+  formOpen = true;
+  $('s-time').textContent = t.toFixed(1) + 's';
+  $('s-verdict').textContent = verdict(t);
+  $('s-phone').value = ''; $('s-consent').checked = false;
+  $('s-status').textContent = '';
+  $('s-send').disabled = $('s-skip').disabled = false;
+  $('submit').hidden = false;
+  $('s-phone').focus();
+}
+
+function closeForm() {
+  $('s-phone').value = ''; // never leave the previous player's number on screen
+  $('submit').hidden = true;
+  formOpen = false;
+  state = 'menu'; enemies = []; particles = [];
+  loadTop();
+}
+
+$('s-skip').addEventListener('click', closeForm);
+$('submit').querySelector('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const phone = normalizePhone($('s-phone').value);
+  if (!phone) { $('s-status').textContent = 'Please enter a valid phone number.'; return; }
+  if (!$('s-consent').checked) { $('s-status').textContent = 'Please tick the box to join the competition.'; return; }
+  $('s-send').disabled = $('s-skip').disabled = true;
+  $('s-status').textContent = 'Saving…';
+  savePending([...loadPending(), { phone, time: Math.round(t * 100) / 100, consent: true }]);
+  const sent = await flushPending();
+  $('s-status').textContent = sent ? 'Saved — good luck!' : 'Saved on this device, will be sent when online.';
+  setTimeout(closeForm, 1400);
+});
+
+flushPending().then(loadTop);
+setInterval(() => { if (state !== 'play') flushPending().then(loadTop); }, 60000);
 
 function verdict(t) {
   if (t < 10) return 'Warming up…';
