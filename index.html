@@ -351,7 +351,7 @@ function draw(now) {
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
     text('Beveg deg. Ikke bli truffet.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
-    text('Klarer du å overleve 60 sekunder?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
+    text('Hvor lenge kan du overleve?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
     const pulse = 0.5 + 0.5 * Math.sin(now / 300);
     text('trykk / klikk / mellomrom for å starte', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
     if (top3.length) {
