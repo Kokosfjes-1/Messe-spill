@@ -7,15 +7,16 @@
 <style>
   html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
   canvas { display: block; width: 100vw; height: 100vh; cursor: none; }
-  .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 42px; left: 16px; z-index: 2; pointer-events: none; }
-  #fuel-hud { position: fixed; inset: 0 0 auto; height: 26px; z-index: 2; background: #172230; color: #fff; pointer-events: none; overflow: hidden; font: 700 clamp(10px, 1.5vmin, 12px)/26px system-ui, sans-serif; }
+  .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 16px; left: 16px; z-index: 2; pointer-events: none; }
+  #fuel-hud { position: fixed; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: 50vw; height: 44px; border-radius: 14px; z-index: 2; background: #172230; color: #fff; pointer-events: none; overflow: hidden; box-shadow: 0 3px 16px rgba(0,0,0,0.3); font: 700 clamp(9px, 1.5vmin, 12px)/1.2 system-ui, sans-serif; }
   #fuel-fill { position: absolute; inset: 0; background: #237d69; transform-origin: left; }
   #fuel-hud[data-active="true"] #fuel-fill { background: #275dc0; }
-  #fuel-label { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 0 12px; }
+  #fuel-label { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; text-align: center; }
+  #fuel-label > span:last-child { font-size: 0.85em; font-weight: 500; }
   /* crop away the empty padding in the source image (960x367, text ≈ x30–930, y108–258) */
   .logo .crop { position: relative; overflow: hidden; height: var(--h); width: calc(var(--h) * 6); }
   .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
-  #test-banner { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 4; padding: 8px 12px; border-radius: 8px; background: #ffd23f; color: #171300; font: 700 12px system-ui, sans-serif; text-align: center; }
+  #test-banner { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; z-index: 4; padding: 8px 12px; border-radius: 8px; background: #ffd23f; color: #171300; font: 700 12px system-ui, sans-serif; text-align: center; }
   #test-banner a { color: inherit; margin-left: 8px; }
   /* score form shown after each run */
   #submit { position: fixed; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
@@ -395,7 +396,7 @@ function draw(now) {
   fuelFill.style.transform = `scaleX(${fuel / SLOWMO.capacity})`;
   fuelHud.dataset.active = String(slowActive);
   fuelHud.setAttribute('aria-valuenow', fuel.toFixed(2));
-  fuelValue.textContent = `${slowActive ? 'SAKTEFILM AKTIV' : fuel === 0 ? 'TOM – SLIPP FOR Å LADE' : 'SAKTEFILM'} · ${fmt(fuel)} / ${fmt(SLOWMO.capacity)} s`;
+  fuelValue.textContent = `${slowActive ? 'SAKTEFILM AKTIV' : fuel === 0 ? 'TOM – SLIPP' : 'SAKTEFILM'} · ${fmt(fuel)} / ${fmt(SLOWMO.capacity)} s`;
   ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(t);
   ctx.fillRect(0, 0, W, H);
 
@@ -432,10 +433,10 @@ function draw(now) {
 
   const S = Math.min(W, H);
   if (state === 'play' && sandbox) {
-    text('SANDBOX', W / 2, 26 + S * 0.06, S * 0.04, '#ffd23f', 800);
+    text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
   } else if (state === 'play') {
-    text(fmt(t), W / 2, 26 + S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
-    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, 26 + S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+    text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
+    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
     text('Beveg deg. Ikke bli truffet.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
@@ -503,10 +504,10 @@ function drawSandbox() {
   // top-right, so it doesn't cover the logo
   const pw = size * 22, px = W - pw - 10;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(px, 36, pw, lines.length * lh + 16);
+  ctx.fillRect(px, 10, pw, lines.length * lh + 16);
   ctx.font = `500 ${size}px ui-monospace, Menlo, Consolas, monospace`;
   ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#e6edf3';
-  lines.forEach((l, i) => ctx.fillText(l, px + 8, 44 + i * lh));
+  lines.forEach((l, i) => ctx.fillText(l, px + 8, 18 + i * lh));
 }
 
 // ---------- scores (Azure API) ----------
