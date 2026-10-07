@@ -42,9 +42,9 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="4" aria-valuenow="4">
+<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="3" aria-valuenow="3">
   <div id="fuel-fill"></div>
-  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 4,0 / 4,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
+  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 3,0 / 3,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
 </div>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
@@ -118,8 +118,8 @@ let t = 0, spawnAcc = 0, burstTimer = 0, overAt = 0, newBest = false;
 let enemies = [], particles = [];
 const player = { x: 0, y: 0, tx: 0, ty: 0 };
 const keys = {};
-const SLOWMO = { capacity: 4, rechargeRate: 1 / 5, speed: 0.25 };
-let fuel = SLOWMO.capacity, leftMouseHeld = false, slowActive = false;
+const SLOWMO = { capacity: 3, rechargeRate: 1 / 8, speed: 0.6, releaseTime: 0.25 };
+let fuel = SLOWMO.capacity, leftMouseHeld = false, slowActive = false, slowAmount = 0;
 const fuelHud = document.getElementById('fuel-hud');
 const fuelFill = document.getElementById('fuel-fill');
 const fuelValue = document.getElementById('fuel-value');
@@ -158,7 +158,7 @@ function sandboxKey(k) {
 function reset() {
   applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
-  fuel = SLOWMO.capacity; slowActive = false;
+  fuel = SLOWMO.capacity; slowActive = false; slowAmount = 0;
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
   state = 'play'; newBest = false;
 }
@@ -278,14 +278,31 @@ function advanceGame(realDt) {
   const held = leftMouseHeld || keys[' '];
   let slowedSeconds = 0;
   if (held) {
+    // Activation is instant, including when pressed again during the release.
     slowedSeconds = Math.min(fuel, realDt);
     fuel = Math.max(0, fuel - slowedSeconds);
     if (fuel < 1e-9) fuel = 0;
+    slowAmount = fuel > 0 ? 1 : 0;
   } else {
-    fuel = Math.min(SLOWMO.capacity, fuel + realDt * SLOWMO.rechargeRate);
+    let releaseSeconds = Math.min(realDt, slowAmount * SLOWMO.releaseTime);
+    let nextAmount = Math.max(0, slowAmount - releaseSeconds / SLOWMO.releaseTime);
+    // Integrate the linear fade exactly: a complete release costs 0.125 fuel
+    // seconds. Tapping cannot obtain any slowdown without paying for it.
+    slowedSeconds = (slowAmount + nextAmount) * 0.5 * releaseSeconds;
+    if (slowedSeconds > fuel) {
+      // Stop the transition at exhaustion; only the remaining normal-speed
+      // part of this frame is eligible for recharge.
+      const atEmpty = Math.sqrt(Math.max(0, slowAmount * slowAmount - 2 * fuel / SLOWMO.releaseTime));
+      releaseSeconds = 2 * fuel / (slowAmount + atEmpty);
+      slowedSeconds = fuel;
+      nextAmount = 0;
+    }
+    slowAmount = nextAmount;
+    fuel = Math.min(SLOWMO.capacity, Math.max(0, fuel - slowedSeconds) +
+      Math.max(0, realDt - releaseSeconds) * SLOWMO.rechargeRate);
   }
   slowActive = slowedSeconds > 0;
-  // If fuel runs out mid-frame, only the funded fraction gets slow motion.
+  // The average slowdown also covers release/exhaustion within a frame.
   const speed = realDt > 0 ? 1 - (1 - SLOWMO.speed) * slowedSeconds / realDt : 1;
   update(Math.min(0.05, realDt) * speed * (sandbox ? timeScale : 1));
 }
