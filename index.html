@@ -321,6 +321,14 @@ function draw(now) {
 
   // player
   if (state === 'play') {
+    // cursor dot + line to it, so you can see where the ball is heading when it lags behind the mouse
+    if (Math.hypot(player.tx - player.x, player.ty - player.y) > U) {
+      ctx.strokeStyle = 'rgba(94,242,194,0.3)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.tx, player.ty); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(player.tx, player.ty, 0.6 * U, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
+
     ctx.beginPath(); ctx.arc(player.x, player.y, CFG.playerRadius * U, 0, Math.PI * 2);
     ctx.fillStyle = '#5ef2c2'; ctx.shadowColor = '#5ef2c2'; ctx.shadowBlur = 18; ctx.fill(); ctx.shadowBlur = 0;
   }
