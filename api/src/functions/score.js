@@ -1,8 +1,8 @@
 const { app } = require('@azure/functions');
-const { getTable, normalizePhone, PARTITION, MAX_TIME } = require('../shared');
+const { getTable, normalizePhone, cleanTag, PARTITION, MAX_TIME } = require('../shared');
 
-// POST /api/score  { phone, time, consent }
-// One row per phone number, keeping that player's best time.
+// POST /api/score  { phone, time, consent, tag? }
+// One row per phone number, keeping that player's best time and latest tag.
 app.http('score', {
   methods: ['POST'],
   authLevel: 'anonymous',
@@ -22,10 +22,12 @@ app.http('score', {
     try { existing = await table.getEntity(PARTITION, phone); } catch (e) { if (e.statusCode !== 404) throw e; }
 
     const bestTime = Math.max(time, existing ? existing.bestTime : 0);
+    const tag = cleanTag(body.tag) || (existing && existing.tag) || '';
     await table.upsertEntity({
       partitionKey: PARTITION,
       rowKey: phone,
       bestTime,
+      tag,
       lastTime: time,
       plays: (existing ? existing.plays : 0) + 1,
       firstSeen: existing ? existing.firstSeen : new Date(),

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="no">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -20,9 +20,10 @@
   #submit .time { font-size: 56px; font-weight: 900; line-height: 1; color: #fff; }
   #submit .verdict { color: #ffd23f; font-weight: 600; margin: 8px 0 20px; }
   #submit p { margin: 0 0 12px; color: #b6c0cf; font-size: 15px; }
-  #submit input[type=tel] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px; border-radius: 10px;
+  #submit input[type=tel], #submit input[type=text] { width: 100%; box-sizing: border-box; font-size: 22px; padding: 12px 14px; border-radius: 10px;
                             border: 1px solid #3a4558; background: #0b0d12; color: #fff; text-align: center; letter-spacing: 1px; }
-  #submit input[type=tel]:focus { outline: 2px solid #5ef2c2; border-color: transparent; }
+  #submit input[type=text] { font-size: 18px; letter-spacing: 0; margin-bottom: 10px; }
+  #submit input[type=tel]:focus, #submit input[type=text]:focus { outline: 2px solid #5ef2c2; border-color: transparent; }
   #submit label { display: flex; gap: 10px; align-items: flex-start; text-align: left; font-size: 13px; color: #9aa6b8; margin: 14px 0 18px; cursor: pointer; }
   #submit label input { width: 20px; height: 20px; flex: none; margin: 0; accent-color: #5ef2c2; }
   #submit .buttons { display: flex; gap: 10px; }
@@ -40,12 +41,13 @@
   <form novalidate>
     <div class="time" id="s-time">0.0s</div>
     <div class="verdict" id="s-verdict"></div>
-    <p>Enter your phone number to join the competition. We'll contact the winner.</p>
-    <input type="tel" id="s-phone" inputmode="tel" autocomplete="off" placeholder="Phone number" maxlength="20">
-    <label><input type="checkbox" id="s-consent"> I agree that my phone number is stored so the winner can be contacted. It is deleted after the event and never shown on screen.</label>
+    <p>Skriv inn telefonnummeret ditt for å være med i konkurransen. Vi kontakter vinneren.</p>
+    <input type="text" id="s-tag" autocomplete="off" placeholder="Navn eller tag (vises på topp 3, valgfritt)" maxlength="16">
+    <input type="tel" id="s-phone" inputmode="tel" autocomplete="off" placeholder="Telefonnummer" maxlength="20">
+    <label><input type="checkbox" id="s-consent"> Jeg godtar at telefonnummeret mitt lagres slik at vinneren kan kontaktes. Det slettes etter messen og vises aldri på skjermen.</label>
     <div class="buttons">
-      <button type="button" class="ghost" id="s-skip">Skip</button>
-      <button type="submit" class="primary" id="s-send">Submit</button>
+      <button type="button" class="ghost" id="s-skip">Hopp over</button>
+      <button type="submit" class="primary" id="s-send">Send inn</button>
     </div>
     <div class="status" id="s-status"></div>
   </form>
@@ -343,26 +345,26 @@ function draw(now) {
   if (state === 'play' && sandbox) {
     text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
   } else if (state === 'play') {
-    text(t.toFixed(1), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
-    if (best > 0) text(`best ${best.toFixed(1)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+    text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
+    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
-    text('Move. Don’t get hit.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
-    text('Can you survive 60 seconds?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
+    text('Beveg deg. Ikke bli truffet.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
+    text('Klarer du å overleve 60 sekunder?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
     const pulse = 0.5 + 0.5 * Math.sin(now / 300);
-    text('tap / click / space to start', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+    text('trykk / klikk / mellomrom for å starte', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
     if (top3.length) {
-      text('TOP 3', W / 2, H / 2 + S * 0.2, S * 0.03, 'rgba(255,255,255,0.5)', 800);
+      text('TOPP 3', W / 2, H / 2 + S * 0.2, S * 0.03, 'rgba(255,255,255,0.5)', 800);
       const medal = ['#ffd23f', '#d6dde8', '#e0995e'];
-      top3.forEach((r, i) => text(`${i + 1}.  ${r.time.toFixed(1)}s`, W / 2, H / 2 + S * (0.26 + i * 0.055), S * 0.04, medal[i], 800));
+      top3.forEach((r, i) => text(`${i + 1}.  ${fmt(r.time)} s${r.tag ? '   ' + r.tag : ''}`, W / 2, H / 2 + S * (0.26 + i * 0.055), S * 0.04, medal[i], 800));
     }
   } else if (state === 'over' && !formOpen) {
-    text(t.toFixed(1) + 's', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
+    text(fmt(t) + ' s', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
     text(verdict(t), W / 2, H / 2 + S * 0.05, S * 0.045, '#ffd23f', 600);
-    text(newBest ? 'NEW BEST!' : `best ${best.toFixed(1)}s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
+    text(newBest ? 'NY REKORD!' : `rekord ${fmt(best)} s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
     if (performance.now() - overAt > 900) {
       const pulse = 0.5 + 0.5 * Math.sin(now / 300);
-      text('tap to play again', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+      text('trykk for å spille igjen', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
     }
   }
 }
@@ -390,22 +392,22 @@ function drawSandbox() {
   }
 
   const lines = [
-    `time        ${t.toFixed(1)}s${freezeTime ? '  (locked)' : ''}`,
-    `spawn rate  ${spawnRate(t).toFixed(2)}/s`,
-    `enemy speed ${enemySpeed(t).toFixed(1)} u/s  (you: ${CFG.playerMaxSpeed})`,
-    `darts       ${t > CFG.dartsFrom ? 'on' : 'from ' + CFG.dartsFrom + 's'}`,
-    `bursts      ${t > CFG.burstsFrom ? 'on' : 'from ' + CFG.burstsFrom + 's'}`,
-    `enemies     ${enemies.length}`,
-    `hits taken  ${hits}`,
-    `game speed  ${timeScale}x${paused ? '  PAUSED' : ''}${frozen ? '  FROZEN' : ''}`,
+    `tid         ${t.toFixed(1)}s${freezeTime ? '  (låst)' : ''}`,
+    `spawnrate   ${spawnRate(t).toFixed(2)}/s`,
+    `fiendefart  ${enemySpeed(t).toFixed(1)} u/s  (du: ${CFG.playerMaxSpeed})`,
+    `darts       ${t > CFG.dartsFrom ? 'på' : 'fra ' + CFG.dartsFrom + 's'}`,
+    `bursts      ${t > CFG.burstsFrom ? 'på' : 'fra ' + CFG.burstsFrom + 's'}`,
+    `fiender     ${enemies.length}`,
+    `treff       ${hits}`,
+    `spillfart   ${timeScale}x${paused ? '  PAUSE' : ''}${frozen ? '  FRYST' : ''}`,
     `fps         ${fps.toFixed(0)}`,
     ``,
-    `space pause    [ ] game speed`,
-    `F freeze world (you can move)`,
-    `+ / -  time ±10s   T lock time`,
-    `N enemy  X dart  B burst  C clear`,
-    `H hitboxes  R reset hits`,
-    `Esc or ppa4  exit`,
+    `mellomrom pause  [ ] spillfart`,
+    `F frys verden (du kan bevege deg)`,
+    `+ / -  tid ±10s   T lås tid`,
+    `N fiende  X dart  B burst  C tøm`,
+    `H hitbokser  R nullstill treff`,
+    `Esc eller ppa4  avslutt`,
   ];
   const size = Math.max(11, Math.min(14, U * 1.6)), lh = size * 1.45;
   // top-right, so it doesn't cover the logo
@@ -458,17 +460,17 @@ async function loadTop() {
 function openForm() {
   if (state !== 'over') return;
   formOpen = true;
-  $('s-time').textContent = t.toFixed(1) + 's';
+  $('s-time').textContent = fmt(t) + ' s';
   $('s-verdict').textContent = verdict(t);
-  $('s-phone').value = ''; $('s-consent').checked = false;
+  $('s-phone').value = ''; $('s-tag').value = ''; $('s-consent').checked = false;
   $('s-status').textContent = '';
   $('s-send').disabled = $('s-skip').disabled = false;
   $('submit').hidden = false;
-  $('s-phone').focus();
+  $('s-tag').focus();
 }
 
 function closeForm() {
-  $('s-phone').value = ''; // never leave the previous player's number on screen
+  $('s-phone').value = ''; $('s-tag').value = ''; // never leave the previous player's details on screen
   $('submit').hidden = true;
   formOpen = false;
   state = 'menu'; enemies = []; particles = [];
@@ -479,29 +481,34 @@ $('s-skip').addEventListener('click', closeForm);
 $('submit').querySelector('form').addEventListener('submit', async e => {
   e.preventDefault();
   const phone = normalizePhone($('s-phone').value);
-  if (!phone) { $('s-status').textContent = 'Please enter a valid phone number.'; return; }
-  if (!$('s-consent').checked) { $('s-status').textContent = 'Please tick the box to join the competition.'; return; }
+  if (!phone) { $('s-status').textContent = 'Skriv inn et gyldig telefonnummer.'; return; }
+  const tag = $('s-tag').value.trim();
+  if (/\d{5,}/.test(tag.replace(/[\s\-().+]/g, ''))) { $('s-status').textContent = 'Ikke skriv telefonnummeret i taggen – den vises på skjermen.'; return; }
+  if (!$('s-consent').checked) { $('s-status').textContent = 'Kryss av i boksen for å være med i konkurransen.'; return; }
   $('s-send').disabled = $('s-skip').disabled = true;
-  $('s-status').textContent = 'Saving…';
-  savePending([...loadPending(), { phone, time: Math.round(t * 100) / 100, consent: true }]);
+  $('s-status').textContent = 'Lagrer …';
+  savePending([...loadPending(), { phone, tag, time: Math.round(t * 100) / 100, consent: true }]);
   const sent = await flushPending();
-  $('s-status').textContent = sent ? 'Saved — good luck!' : 'Saved on this device, will be sent when online.';
+  $('s-status').textContent = sent ? 'Lagret – lykke til!' : 'Lagret på denne enheten, sendes når nettet er tilbake.';
   setTimeout(closeForm, 1400);
 });
 
 flushPending().then(loadTop);
 setInterval(() => { if (state !== 'play') flushPending().then(loadTop); }, 60000);
 
+// Norwegian number format: 23,4
+const fmt = n => n.toFixed(1).replace('.', ',');
+
 function verdict(t) {
-  if (t < 10) return 'Warming up…';
-  if (t < 20) return 'Not bad!';
+  if (t < 10) return 'Oppvarming …';
+  if (t < 20) return 'Ikke verst!';
   if (t < 30) return 'Solid!';
-  if (t < 40) return 'Impressive!';
-  if (t < 50) return 'Elite reflexes!';
-  if (t < 60) return 'So close to legendary!';
-  if (t < 75) return 'LEGENDARY — you beat the minute!';
-  if (t < 90) return 'Are you even human?';
-  return 'Absolutely unreal.';
+  if (t < 40) return 'Imponerende!';
+  if (t < 50) return 'Elitereflekser!';
+  if (t < 60) return 'Så nær legendarisk!';
+  if (t < 75) return 'LEGENDARISK – du slo minuttet!';
+  if (t < 90) return 'Er du i det hele tatt et menneske?';
+  return 'Helt uvirkelig.';
 }
 
 requestAnimationFrame(frame);

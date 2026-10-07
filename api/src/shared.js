@@ -22,4 +22,12 @@ function normalizePhone(raw) {
   return /^\+\d{8,15}$/.test(p) ? p : null;
 }
 
-module.exports = { getTable, normalizePhone, PARTITION, MAX_TIME };
+// Public nickname shown on the leaderboard: trimmed, max 16 chars, no control chars.
+// Anything that looks like a phone number is dropped so nobody publishes their number by mistake.
+function cleanTag(raw) {
+  if (typeof raw !== 'string') return '';
+  const tag = raw.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+  return /\d{5,}/.test(tag.replace(/[\s\-().+]/g, '')) ? '' : tag;
+}
+
+module.exports = { getTable, normalizePhone, cleanTag, PARTITION, MAX_TIME };
