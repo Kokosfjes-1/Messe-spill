@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Dodge Admin</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #151a24; --line: #2a3242; --text: #e6edf3; --muted: #9aa6b8;
+    --accent: #5ef2c2; --accent-ink: #062018; --warn: #ffd23f; --danger: #ff4d5e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 17px; margin: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  button { font: inherit; font-weight: 600; border-radius: 9px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line); background: transparent; color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  button.danger { color: var(--danger); border-color: #5a2a33; }
+  button.small { padding: 4px 10px; font-size: 13px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  input[type=text], input[type=password] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* login */
+  #login { max-width: 360px; margin: 12vh auto 0; }
+  #login form { display: grid; gap: 12px; }
+  #login input { width: 100%; font-size: 17px; padding: 12px; }
+  .error { color: var(--danger); min-height: 20px; font-size: 14px; }
+
+  /* players */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  td.tag input { width: 150px; padding: 5px 8px; }
+  td.tag .cell { display: flex; gap: 6px; align-items: center; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { color: var(--muted); padding: 16px 0; }
+
+  /* difficulty */
+  .master { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 18px; }
+  .master .row-head strong { font-size: 18px; }
+  .row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .row-head .val { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); }
+  .row .help { color: var(--muted); font-size: 12px; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: -2px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 8px 0 4px; }
+  input[type=range].changed { accent-color: var(--warn); }
+  .preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0 4px; }
+  .preview div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .preview b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+  .status { font-size: 14px; color: var(--warn); }
+  .params { columns: 2 380px; column-gap: 28px; }
+  .params .row { break-inside: avoid; }
+</style>
+</head>
+<body>
+<main>
+  <section id="login" class="panel" hidden>
+    <h1 style="margin-bottom:6px">Dodge admin</h1>
+    <p class="muted" style="margin-top:0">Logg inn med admin-passordet.</p>
+    <form>
+      <input type="password" id="password" placeholder="Passord" autocomplete="current-password" required>
+      <button class="primary" type="submit">Logg inn</button>
+      <div class="error" id="login-error"></div>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header>
+      <h1>Dodge admin</h1>
+      <div style="display:flex;gap:8px">
+        <a href="/" target="_blank"><button type="button">Åpne spillet</button></a>
+        <button type="button" id="logout">Logg ut</button>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Vanskelighetsgrad</h2>
+          <div class="muted">Spillet henter nye innstillinger mellom rundene (innen ett minutt).</div>
+        </div>
+      </div>
+      <div class="master">
+        <div class="row-head"><strong>Generell vanskelighetsgrad</strong><span class="val" id="master-val"></span></div>
+        <input type="range" id="master" min="0" max="100" step="1">
+        <div class="scale"><span>Lett</span><span>Normal</span><span>Vanskelig</span></div>
+        <div class="preview" id="preview"></div>
+      </div>
+      <div class="params" id="params"></div>
+      <div class="actions">
+        <button class="primary" id="save-settings">Lagre</button>
+        <button id="reset-settings">Tilbakestill til standard</button>
+        <span class="status" id="settings-status"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Spillere <span class="muted" id="player-count"></span></h2>
+          <div class="muted">Sortert på beste tid. Telefonnumre vises bare her.</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="refresh" class="small">Oppdater</button>
+          <button id="delete-all" class="small danger">Slett alle</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Tag</th><th>Telefon</th><th>Beste tid</th><th>Runder</th><th>Sist spilt</th><th></th></tr></thead>
+          <tbody id="players"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="players-empty" hidden>Ingen spillere ennå.</div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt1 = n => n.toFixed(1).replace('.', ',');
+let token = null;
+try { token = sessionStorage.getItem('dodge-admin'); } catch (e) {}
+
+async function api(path, body) {
+  const res = await fetch('/api/manage/' + path, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token || '' },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
+  });
+  if (res.status === 401 && path !== 'login') { showLogin(); throw new Error('unauthorized'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+  return data;
+}
+
+// ---------- login ----------
+function showLogin() {
+  token = null; try { sessionStorage.removeItem('dodge-admin'); } catch (e) {}
+  $('app').hidden = true; $('login').hidden = false; $('password').focus();
+}
+$('login').querySelector('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('login-error').textContent = '';
+  try {
+    const { token: t } = await api('login', { password: $('password').value });
+    token = t; try { sessionStorage.setItem('dodge-admin', t); } catch (e) {}
+    $('password').value = '';
+    start();
+  } catch (err) {
+    $('login-error').textContent = err.status === 401 ? 'Feil passord.' : 'Kunne ikke logge inn. Prøv igjen.';
+  }
+});
+$('logout').addEventListener('click', showLogin);
+
+async function start() {
+  $('login').hidden = true; $('app').hidden = false;
+  await Promise.all([loadSettings(), loadPlayers()]);
+}
+
+// ---------- players ----------
+async function loadPlayers() {
+  const players = await api('players');
+  const body = $('players');
+  body.replaceChildren();
+  $('player-count').textContent = `(${players.length})`;
+  $('players-empty').hidden = players.length > 0;
+  players.forEach((p, i) => {
+    const tr = document.createElement('tr');
+    const cell = (text, cls) => { const td = document.createElement('td'); td.textContent = text; if (cls) td.className = cls; tr.append(td); return td; };
+    cell(i + 1, 'num');
+
+    const tagTd = document.createElement('td'); tagTd.className = 'tag';
+    const input = document.createElement('input'); input.type = 'text'; input.maxLength = 16; input.value = p.tag; input.placeholder = '–';
+    const save = document.createElement('button'); save.className = 'small primary'; save.textContent = 'Lagre'; save.hidden = true;
+    input.addEventListener('input', () => { save.hidden = input.value === p.tag; });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !save.hidden) save.click(); });
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try { const r = await api('players/update', { phone: p.phone, tag: input.value }); p.tag = input.value = r.tag; save.hidden = true; }
+      catch (err) { alert('Kunne ikke lagre taggen.'); }
+      save.disabled = false;
+    });
+    const wrap = document.createElement('div'); wrap.className = 'cell';
+    wrap.append(input, save); tagTd.append(wrap); tr.append(tagTd);
+
+    cell(p.phone);
+    cell(fmt1(p.bestTime) + ' s', 'num');
+    cell(p.plays, 'num');
+    cell(p.lastSeen ? new Date(p.lastSeen).toLocaleString('no-NO', { dateStyle: 'short', timeStyle: 'short' }) : '');
+
+    const delTd = document.createElement('td');
+    const del = document.createElement('button'); del.className = 'small danger'; del.textContent = 'Slett';
+    del.addEventListener('click', async () => {
+      if (!confirm(`Slette ${p.tag || p.phone} (${fmt1(p.bestTime)} s)?`)) return;
+      del.disabled = true;
+      try { await api('players/delete', { phone: p.phone }); await loadPlayers(); }
+      catch (err) { alert('Kunne ikke slette.'); del.disabled = false; }
+    });
+    delTd.append(del); tr.append(delTd);
+    body.append(tr);
+  });
+}
+$('refresh').addEventListener('click', loadPlayers);
+$('delete-all').addEventListener('click', async () => {
+  const answer = prompt('Dette sletter ALLE spillere og telefonnumre permanent.\nSkriv SLETT for å bekrefte:');
+  if (answer !== 'SLETT') return;
+  try { const r = await api('players/delete-all', { confirm: 'SLETT' }); alert(`Slettet ${r.deleted} spillere.`); }
+  catch (err) { alert('Kunne ikke slette alle.'); }
+  loadPlayers();
+});
+
+// ---------- difficulty ----------
+let PARAMS = [], values = {}, master = 50, saved = '';
+const sliders = {};
+
+// slider position 0..1000 runs from easy (left) to hard (right) for every parameter
+const toPos = (p, v) => Math.round((v - p.easy) / (p.hard - p.easy) * 1000);
+const roundStep = (p, v) => { const d = (String(p.step).split('.')[1] || '').length; return +(Math.round(v / p.step) * p.step).toFixed(d); };
+const fromPos = (p, pos) => roundStep(p, p.easy + pos / 1000 * (p.hard - p.easy));
+// master 0 → easy, 50 → default, 100 → hard
+const fromMaster = (p, m) => roundStep(p, m <= 50 ? p.easy + (p.def - p.easy) * m / 50 : p.def + (p.hard - p.def) * (m - 50) / 50);
+
+function show(p, v) {
+  if (p.unit === '%') return Math.round(v * 100) + ' %';
+  const d = (String(p.step).split('.')[1] || '').length;
+  return v.toFixed(d).replace('.', ',') + (p.unit ? ' ' + p.unit : '');
+}
+
+function masterLabel() {
+  if (master === null) return 'Tilpasset';
+  const name = master < 20 ? 'Veldig lett' : master < 40 ? 'Lett' : master <= 60 ? 'Normal' : master <= 80 ? 'Vanskelig' : 'Veldig vanskelig';
+  return `${name} (${master})`;
+}
+
+function render() {
+  $('master').value = master === null ? 50 : master;
+  $('master').classList.toggle('changed', master === null);
+  $('master-val').textContent = masterLabel();
+  for (const p of PARAMS) {
+    const s = sliders[p.key];
+    s.input.value = toPos(p, values[p.key]);
+    s.val.textContent = show(p, values[p.key]);
+    s.input.classList.toggle('changed', values[p.key] !== p.def);
+  }
+  // what a player meets at 10 / 30 / 60 seconds (same formulas as the game)
+  const v = values;
+  $('preview').replaceChildren(...[10, 30, 60].map(t => {
+    const d = document.createElement('div');
+    const b = document.createElement('b'); b.textContent = `Ved ${t} sekunder`;
+    const rate = v.spawnBase + v.spawnGrowth * t * t, speed = v.enemySpeedBase * (1 + t / v.speedDoubleTime);
+    d.append(b, `${fmt1(rate)} fiender/s · fart ${Math.round(speed)} (du: ${Math.round(v.playerMaxSpeed)})`);
+    return d;
+  }));
+  const dirty = JSON.stringify({ master, values }) !== saved;
+  $('settings-status').textContent = dirty ? 'Ulagrede endringer' : '';
+  $('save-settings').disabled = !dirty;
+}
+
+async function loadSettings() {
+  const data = await api('settings');
+  PARAMS = data.params; values = data.values; master = data.master;
+  saved = JSON.stringify({ master, values });
+  const box = $('params');
+  box.replaceChildren();
+  for (const p of PARAMS) {
+    const row = document.createElement('div'); row.className = 'row';
+    const head = document.createElement('div'); head.className = 'row-head';
+    const label = document.createElement('span'); label.textContent = p.label;
+    const val = document.createElement('span'); val.className = 'val';
+    head.append(label, val);
+    const input = document.createElement('input'); input.type = 'range'; input.min = 0; input.max = 1000; input.step = 1;
+    input.setAttribute('aria-label', p.label);
+    input.addEventListener('input', () => { values[p.key] = fromPos(p, +input.value); master = null; render(); });
+    const scale = document.createElement('div'); scale.className = 'scale';
+    scale.innerHTML = '<span>lettere</span><span>vanskeligere</span>';
+    row.append(head, input, scale);
+    if (p.help) { const h = document.createElement('div'); h.className = 'help'; h.textContent = p.help; row.append(h); }
+    box.append(row);
+    sliders[p.key] = { input, val };
+  }
+  render();
+}
+
+$('master').addEventListener('input', e => {
+  master = +e.target.value;
+  for (const p of PARAMS) values[p.key] = fromMaster(p, master);
+  render();
+});
+$('reset-settings').addEventListener('click', () => {
+  master = 50;
+  for (const p of PARAMS) values[p.key] = p.def;
+  render();
+});
+$('save-settings').addEventListener('click', async () => {
+  $('save-settings').disabled = true;
+  $('settings-status').textContent = 'Lagrer …';
+  try {
+    const r = await api('settings', { master, values });
+    values = r.values; master = r.master;
+    saved = JSON.stringify({ master, values });
+    render();
+    $('settings-status').textContent = 'Lagret ✓';
+  } catch (err) {
+    $('settings-status').textContent = 'Kunne ikke lagre.';
+    $('save-settings').disabled = false;
+  }
+});
+
+token ? start().catch(() => {}) : showLogin();
+</script>
+</body>
+</html>

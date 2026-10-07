@@ -133,6 +133,7 @@ function sandboxKey(k) {
 }
 
 function reset() {
+  applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
   state = 'play'; newBest = false;
@@ -450,6 +451,29 @@ async function doFlush() {
   return true;
 }
 
+// ---------- difficulty from /admin ----------
+const DEFAULTS = { ...CFG };
+let remoteSettings = null;
+try { remoteSettings = JSON.parse(localStorage.getItem('dodge-settings')); } catch (e) {}
+
+function applySettings() {
+  Object.assign(CFG, DEFAULTS);
+  for (const [k, v] of Object.entries(remoteSettings || {})) {
+    if (k in DEFAULTS && typeof v === 'number' && Number.isFinite(v)) CFG[k] = v;
+  }
+  CFG.keyboardSpeed = CFG.playerMaxSpeed;
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch(`${API}/settings`, { cache: 'no-store' });
+    if (!res.ok) return;
+    remoteSettings = (await res.json()).values;
+    try { localStorage.setItem('dodge-settings', JSON.stringify(remoteSettings)); } catch (e) {}
+    if (state !== 'play') applySettings();
+  } catch (e) {} // offline: keep the last known settings
+}
+
 async function loadTop() {
   try {
     const res = await fetch(`${API}/top`, { cache: 'no-store' });
@@ -474,7 +498,7 @@ function closeForm() {
   $('submit').hidden = true;
   formOpen = false;
   state = 'menu'; enemies = []; particles = [];
-  loadTop();
+  loadTop(); loadSettings();
 }
 
 $('s-skip').addEventListener('click', closeForm);
@@ -493,8 +517,10 @@ $('submit').querySelector('form').addEventListener('submit', async e => {
   setTimeout(closeForm, 1400);
 });
 
+applySettings();
 flushPending().then(loadTop);
-setInterval(() => { if (state !== 'play') flushPending().then(loadTop); }, 60000);
+loadSettings();
+setInterval(() => { if (state !== 'play') { flushPending().then(loadTop); loadSettings(); } }, 60000);
 
 // Norwegian number format: 23,4
 const fmt = n => n.toFixed(1).replace('.', ',');

@@ -1,4 +1,25 @@
 {
-  "platform": { "apiRuntime": "node:20" },
-  "globalHeaders": { "X-Content-Type-Options": "nosniff" }
+  "platform": {
+    "apiRuntime": "node:20"
+  },
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff"
+  },
+  "routes": [
+    {
+      "route": "/admin",
+      "rewrite": "/admin/index.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow",
+        "Cache-Control": "no-store"
+      }
+    },
+    {
+      "route": "/admin/*",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow",
+        "Cache-Control": "no-store"
+      }
+    }
+  ]
 }

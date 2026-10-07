@@ -4,13 +4,14 @@ const TABLE = 'scores';
 const PARTITION = 'player';
 const MAX_TIME = 600; // seconds – anything above this is not a real run
 
-let client;
-async function getTable() {
-  if (!client) {
-    client = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, TABLE);
+const clients = {};
+async function getTable(name = TABLE) {
+  if (!clients[name]) {
+    const client = TableClient.fromConnectionString(process.env.STORAGE_CONNECTION_STRING, name);
     try { await client.createTable(); } catch (e) { if (e.statusCode !== 409) throw e; }
+    clients[name] = client;
   }
-  return client;
+  return clients[name];
 }
 
 // "912 34 567" -> "+4791234567", "0046 70..." -> "+4670...", otherwise null
