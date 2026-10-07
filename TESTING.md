@@ -18,6 +18,15 @@ game without Azure; production API features require Azure Functions.
 
 ## Workflow
 
+The current test version includes a slow-motion fuel bar at the top. Hold
+left-click or Space to run the entire game, including movement and the timer,
+at 25% speed. Fuel lasts four real seconds and recharges by one second per five
+real seconds with both controls released (20 seconds from empty to full).
+Holding either control on empty keeps normal speed and prevents recharging.
+Each new run starts full. Fuel does not change outside a run, while sandbox
+pause is active, or while the tab is hidden. In this test version, sandbox pause
+has moved to **K** so Space can activate slow motion.
+
 1. Edit `test/index.html` and test locally. Push those changes to publish the
    test version alongside the current production game when ready.
 2. Test `/test/`, including controls, game over, saving a local result, and the

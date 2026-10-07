@@ -7,7 +7,11 @@
 <style>
   html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
   canvas { display: block; width: 100vw; height: 100vh; cursor: none; }
-  .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 16px; left: 16px; z-index: 2; pointer-events: none; }
+  .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 42px; left: 16px; z-index: 2; pointer-events: none; }
+  #fuel-hud { position: fixed; inset: 0 0 auto; height: 26px; z-index: 2; background: #172230; color: #fff; pointer-events: none; overflow: hidden; font: 700 clamp(10px, 1.5vmin, 12px)/26px system-ui, sans-serif; }
+  #fuel-fill { position: absolute; inset: 0; background: #237d69; transform-origin: left; }
+  #fuel-hud[data-active="true"] #fuel-fill { background: #275dc0; }
+  #fuel-label { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 0 12px; }
   /* crop away the empty padding in the source image (960x367, text ≈ x30–930, y108–258) */
   .logo .crop { position: relative; overflow: hidden; height: var(--h); width: calc(var(--h) * 6); }
   .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
@@ -38,6 +42,10 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="4" aria-valuenow="4">
+  <div id="fuel-fill"></div>
+  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 4,0 / 4,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
+</div>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
 <div id="submit" hidden>
@@ -110,6 +118,11 @@ let t = 0, spawnAcc = 0, burstTimer = 0, overAt = 0, newBest = false;
 let enemies = [], particles = [];
 const player = { x: 0, y: 0, tx: 0, ty: 0 };
 const keys = {};
+const SLOWMO = { capacity: 4, rechargeRate: 1 / 5, speed: 0.25 };
+let fuel = SLOWMO.capacity, leftMouseHeld = false, slowActive = false;
+const fuelHud = document.getElementById('fuel-hud');
+const fuelFill = document.getElementById('fuel-fill');
+const fuelValue = document.getElementById('fuel-value');
 
 // Sandbox tools: ppa4 during a game. Independent test version: ppa5.
 const SECRET = 'ppa4';
@@ -124,7 +137,7 @@ function exitSandbox() {
 }
 
 function sandboxKey(k) {
-  if (k === ' ') paused = !paused;
+  if (k === 'k') paused = !paused;
   else if (k === 'h') showHitboxes = !showHitboxes;
   else if (k === 'f') frozen = !frozen;
   else if (k === 't') freezeTime = !freezeTime;
@@ -145,12 +158,28 @@ function sandboxKey(k) {
 function reset() {
   applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
+  fuel = SLOWMO.capacity; slowActive = false;
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
   state = 'play'; newBest = false;
 }
 
 // ---------- input ----------
 let pointerType = 'mouse', lastTouch = null;
+// Mouse events also catch left-click while another mouse button is held.
+cv.addEventListener('mousedown', e => {
+  if (e.button === 0) { e.preventDefault(); leftMouseHeld = true; }
+});
+addEventListener('mouseup', e => { if (e.button === 0) leftMouseHeld = false; });
+function releaseControls() {
+  leftMouseHeld = false; slowActive = false; lastTouch = null;
+  for (const key of Object.keys(keys)) keys[key] = false;
+}
+addEventListener('blur', releaseControls);
+addEventListener('pointercancel', releaseControls);
+document.addEventListener('visibilitychange', () => {
+  releaseControls();
+  last = performance.now(); // Returning to the tab must not spend/recharge hidden time.
+});
 cv.addEventListener('pointerdown', e => {
   pointerType = e.pointerType;
   lastTouch = { x: e.clientX, y: e.clientY };
@@ -172,6 +201,7 @@ addEventListener('pointerup', () => { lastTouch = null; });
 addEventListener('keydown', e => {
   if (formOpen) return;
   const k = e.key.toLowerCase();
+  if (k === ' ') e.preventDefault();
   keys[k] = true;
   typed = (typed + k).slice(-SECRET.length);
   if (typed === 'ppa5') {
@@ -183,7 +213,7 @@ addEventListener('keydown', e => {
     sandbox ? exitSandbox() : enterSandbox();
     return;
   }
-  if (sandbox && state === 'play') { sandboxKey(k); return; }
+  if (sandbox && state === 'play') { if (!e.repeat) sandboxKey(k); return; }
   if ((e.key === ' ' || e.key === 'Enter') && (state === 'menu' || (state === 'over' && performance.now() - overAt > 900))) reset();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -231,12 +261,33 @@ function burst() {
 // ---------- loop ----------
 let last = performance.now();
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const realDt = Math.max(0, (now - last) / 1000); last = now;
+  const dt = Math.min(0.05, realDt);
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
-  if (state === 'play') { if (!(sandbox && paused)) update(sandbox ? dt * timeScale : dt); }
-  else updateParticles(dt);
+  slowActive = false;
+  if (!document.hidden) {
+    if (state === 'play') { if (!(sandbox && paused)) advanceGame(realDt); }
+    else updateParticles(dt);
+  }
   draw(now);
   requestAnimationFrame(frame);
+}
+
+function advanceGame(realDt) {
+  // Fuel uses wall-clock seconds. The entire simulation shares the slowed dt.
+  const held = leftMouseHeld || keys[' '];
+  let slowedSeconds = 0;
+  if (held) {
+    slowedSeconds = Math.min(fuel, realDt);
+    fuel = Math.max(0, fuel - slowedSeconds);
+    if (fuel < 1e-9) fuel = 0;
+  } else {
+    fuel = Math.min(SLOWMO.capacity, fuel + realDt * SLOWMO.rechargeRate);
+  }
+  slowActive = slowedSeconds > 0;
+  // If fuel runs out mid-frame, only the funded fraction gets slow motion.
+  const speed = realDt > 0 ? 1 - (1 - SLOWMO.speed) * slowedSeconds / realDt : 1;
+  update(Math.min(0.05, realDt) * speed * (sandbox ? timeScale : 1));
 }
 
 function update(dt) {
@@ -290,6 +341,7 @@ function update(dt) {
 
 function die() {
   state = 'over'; overAt = performance.now();
+  releaseControls();
   if (t > best) { best = t; newBest = true; try { localStorage.setItem(STORAGE_PREFIX + 'best', best); } catch (e) {} }
   for (let i = 0; i < 40; i++) {
     const a = Math.random() * Math.PI * 2, s = (20 + Math.random() * 60) * U;
@@ -299,7 +351,8 @@ function die() {
 }
 
 function updateParticles(dt) {
-  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.94; p.vy *= 0.94; p.life -= dt * 1.2; }
+  const drag = Math.pow(0.94, dt * 60);
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= drag; p.vy *= drag; p.life -= dt * 1.2; }
   particles = particles.filter(p => p.life > 0);
 }
 
@@ -322,6 +375,10 @@ function text(str, x, y, size, color, weight = 700) {
 }
 
 function draw(now) {
+  fuelFill.style.transform = `scaleX(${fuel / SLOWMO.capacity})`;
+  fuelHud.dataset.active = String(slowActive);
+  fuelHud.setAttribute('aria-valuenow', fuel.toFixed(2));
+  fuelValue.textContent = `${slowActive ? 'SAKTEFILM AKTIV' : fuel === 0 ? 'TOM – SLIPP FOR Å LADE' : 'SAKTEFILM'} · ${fmt(fuel)} / ${fmt(SLOWMO.capacity)} s`;
   ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(t);
   ctx.fillRect(0, 0, W, H);
 
@@ -358,10 +415,10 @@ function draw(now) {
 
   const S = Math.min(W, H);
   if (state === 'play' && sandbox) {
-    text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
+    text('SANDBOX', W / 2, 26 + S * 0.06, S * 0.04, '#ffd23f', 800);
   } else if (state === 'play') {
-    text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
-    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+    text(fmt(t), W / 2, 26 + S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
+    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, 26 + S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
     text('Beveg deg. Ikke bli truffet.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
@@ -417,7 +474,8 @@ function drawSandbox() {
     `spillfart   ${timeScale}x${paused ? '  PAUSE' : ''}${frozen ? '  FRYST' : ''}`,
     `fps         ${fps.toFixed(0)}`,
     ``,
-    `mellomrom pause  [ ] spillfart`,
+    `K pause  [ ] spillfart`,
+    `mellomrom / venstreklikk saktefilm`,
     `F frys verden (du kan bevege deg)`,
     `+ / -  tid ±10s   T lås tid`,
     `N fiende  X dart  B burst  C tøm`,
@@ -428,10 +486,10 @@ function drawSandbox() {
   // top-right, so it doesn't cover the logo
   const pw = size * 22, px = W - pw - 10;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(px, 10, pw, lines.length * lh + 16);
+  ctx.fillRect(px, 36, pw, lines.length * lh + 16);
   ctx.font = `500 ${size}px ui-monospace, Menlo, Consolas, monospace`;
   ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = '#e6edf3';
-  lines.forEach((l, i) => ctx.fillText(l, px + 8, 18 + i * lh));
+  lines.forEach((l, i) => ctx.fillText(l, px + 8, 44 + i * lh));
 }
 
 // ---------- scores (Azure API) ----------
