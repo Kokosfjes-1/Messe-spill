@@ -7,6 +7,18 @@
   },
   "routes": [
     {
+      "route": "/test",
+      "redirect": "/test/",
+      "statusCode": 302
+    },
+    {
+      "route": "/test/*",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow",
+        "Cache-Control": "no-store"
+      }
+    },
+    {
       "route": "/admin",
       "rewrite": "/admin/index.html",
       "headers": {
