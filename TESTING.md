@@ -20,9 +20,10 @@ game without Azure; production API features require Azure Functions.
 
 The current test version includes a rounded slow-motion fuel bar near the bottom,
 centered at 50% screen width and 44px tall, above the test-mode banner. Hold
-left-click or Space to run the entire game, including movement and the timer,
-at 60% speed. Fuel lasts three real seconds and recharges by one second per eight
-real seconds at normal speed with both controls released (24 seconds from empty
+left-click or Space to run enemies, spawning, effects, and the timer at 60%
+speed while the player keeps full movement speed with mouse, touch, or keyboard.
+Fuel lasts four real seconds and recharges by one second per eight
+real seconds at normal speed with both controls released (32 seconds from empty
 to full).
 Releasing both controls returns to normal speed linearly over 0.25 real seconds.
 Fuel drains in proportion to the remaining slowdown during that transition:

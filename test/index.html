@@ -43,9 +43,9 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="3" aria-valuenow="3">
+<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="4" aria-valuenow="4">
   <div id="fuel-fill"></div>
-  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 3,0 / 3,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
+  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 4,0 / 4,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
 </div>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
@@ -119,7 +119,7 @@ let t = 0, spawnAcc = 0, burstTimer = 0, overAt = 0, newBest = false;
 let enemies = [], particles = [];
 const player = { x: 0, y: 0, tx: 0, ty: 0 };
 const keys = {};
-const SLOWMO = { capacity: 3, rechargeRate: 1 / 8, speed: 0.6, releaseTime: 0.25 };
+const SLOWMO = { capacity: 4, rechargeRate: 1 / 8, speed: 0.6, releaseTime: 0.25 };
 let fuel = SLOWMO.capacity, leftMouseHeld = false, slowActive = false, slowAmount = 0;
 const fuelHud = document.getElementById('fuel-hud');
 const fuelFill = document.getElementById('fuel-fill');
@@ -275,7 +275,7 @@ function frame(now) {
 }
 
 function advanceGame(realDt) {
-  // Fuel uses wall-clock seconds. The entire simulation shares the slowed dt.
+  // Fuel uses wall-clock seconds. Slow motion affects the world, not the player.
   const held = leftMouseHeld || keys[' '];
   let slowedSeconds = 0;
   if (held) {
@@ -305,10 +305,11 @@ function advanceGame(realDt) {
   slowActive = slowedSeconds > 0;
   // The average slowdown also covers release/exhaustion within a frame.
   const speed = realDt > 0 ? 1 - (1 - SLOWMO.speed) * slowedSeconds / realDt : 1;
-  update(Math.min(0.05, realDt) * speed * (sandbox ? timeScale : 1));
+  const playerDt = Math.min(0.05, realDt) * (sandbox ? timeScale : 1);
+  update(playerDt * speed, playerDt);
 }
 
-function update(dt) {
+function update(dt, playerDt = dt) {
   const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
   if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
 
@@ -317,15 +318,15 @@ function update(dt) {
   const ky = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
   if (kx || ky) {
     const l = Math.hypot(kx, ky);
-    player.tx += kx / l * CFG.keyboardSpeed * U * dt;
-    player.ty += ky / l * CFG.keyboardSpeed * U * dt;
+    player.tx += kx / l * CFG.keyboardSpeed * U * playerDt;
+    player.ty += ky / l * CFG.keyboardSpeed * U * playerDt;
   }
 
   const pr = CFG.playerRadius * U;
   player.tx = Math.max(pr, Math.min(W - pr, player.tx));
   player.ty = Math.max(pr, Math.min(H - pr, player.ty));
   const dx = player.tx - player.x, dy = player.ty - player.y, d = Math.hypot(dx, dy);
-  const maxStep = CFG.playerMaxSpeed * U * dt;
+  const maxStep = CFG.playerMaxSpeed * U * playerDt;
   if (d > maxStep) { player.x += dx / d * maxStep; player.y += dy / d * maxStep; }
   else { player.x = player.tx; player.y = player.ty; }
 
