@@ -113,6 +113,8 @@ const keys = {};
 let countdownAt = 0, message = '', messageUntil = 0, nearMissUntil = 0;
 let demo = false, lastActivity = performance.now(), shakeUntil = 0, deathFlashUntil = 0;
 const ATTRACT_DELAY = 30000;
+const DEMO_DIFFICULTY = 30;
+const demoMotion = { vx: 0, vy: 0 };
 const prefersTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
 // Sandbox tools: ppa4 during a game. Independent test version: ppa5.
@@ -149,6 +151,7 @@ function sandboxKey(k) {
 function reset() {
   applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
+  demoMotion.vx = 0; demoMotion.vy = 0;
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
   state = 'countdown'; countdownAt = performance.now(); newBest = false;
   message = ''; nearMissUntil = 0; demo = false;
@@ -157,6 +160,7 @@ function reset() {
 function startDemo() {
   reset();
   demo = true;
+  demoMotion.vx = CFG.playerMaxSpeed * U * 0.45;
   countdownAt = performance.now() - 3000;
   state = 'play';
 }
@@ -221,6 +225,7 @@ addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 // ---------- difficulty ----------
 const spawnRate = t => CFG.spawnBase + CFG.spawnGrowth * Math.pow(t, CFG.spawnPower);
 const enemySpeed = t => CFG.enemySpeedBase * (1 + t / CFG.speedDoubleTime);
+const difficultyTime = () => demo ? DEMO_DIFFICULTY : t;
 
 function edgePoint() {
   const m = 4 * U, side = Math.random() * 4 | 0;
@@ -241,7 +246,7 @@ function spawn(kind) {
     ang = Math.atan2(ty - p.y, tx - p.x);
   }
   const dart = kind === 'dart';
-  const sp = enemySpeed(t) * U * (dart ? 1.9 : 0.8 + Math.random() * 0.4);
+  const sp = enemySpeed(difficultyTime()) * U * (dart ? 1.9 : 0.8 + Math.random() * 0.4);
   enemies.push({
     x: p.x, y: p.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
     r: (dart ? 1.2 : 1.5 + Math.random() * 1.3) * U, dart, born: t, warning: 0.5,
@@ -251,7 +256,7 @@ function spawn(kind) {
 function burst() {
   const p = edgePoint();
   const base = Math.atan2(player.y - p.y, player.x - p.x);
-  const n = 5, gap = 0.22, sp = enemySpeed(t) * U * 0.9;
+  const n = 5, gap = 0.22, sp = enemySpeed(difficultyTime()) * U * 0.9;
   for (let i = 0; i < n; i++) {
     const a = base + (i - (n - 1) / 2) * gap;
     enemies.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t, warning: 0.5 });
@@ -282,15 +287,34 @@ function frame(now) {
 
 function updatePlayer(dt) {
   if (demo) {
-    // Seek the safest of a handful of moving targets for an unattended demo.
-    let bestPoint = { x: W / 2, y: H / 2 }, bestClearance = -1;
-    for (let i = 0; i < 12; i++) {
-      const a = i / 12 * Math.PI * 2 + t * 0.35;
-      const candidate = { x: W / 2 + Math.cos(a) * W * 0.32, y: H / 2 + Math.sin(a) * H * 0.32 };
-      const clearance = enemies.reduce((min, e) => Math.min(min, Math.hypot(candidate.x - e.x, candidate.y - e.y)), Infinity);
-      if (clearance > bestClearance) { bestClearance = clearance; bestPoint = candidate; }
+    // Pick a safe heading using predicted enemy positions. Momentum is rewarded,
+    // so the demo glides and curves instead of jumping between target points.
+    const speed = CFG.playerMaxSpeed * U * 0.62;
+    const currentAngle = Math.atan2(demoMotion.vy, demoMotion.vx);
+    let bestAngle = currentAngle, bestScore = -Infinity;
+    for (let i = 0; i < 32; i++) {
+      const a = i / 32 * Math.PI * 2;
+      const vx = Math.cos(a) * speed, vy = Math.sin(a) * speed;
+      let score = Math.cos(a - currentAngle) * 4;
+      for (const horizon of [0.18, 0.42, 0.75]) {
+        const px = player.x + vx * horizon, py = player.y + vy * horizon;
+        const wall = Math.min(px, W - px, py, H - py);
+        score += Math.min(12, wall / U) * 0.45;
+        for (const e of enemies) {
+          const clearance = Math.hypot(px - (e.x + e.vx * horizon), py - (e.y + e.vy * horizon)) - e.r;
+          if (clearance < 18 * U) score -= Math.pow((18 * U - clearance) / U, 2) * 0.12;
+        }
+      }
+      // A gentle pull toward the center keeps the demonstration visible.
+      const futureX = player.x + vx * 0.6, futureY = player.y + vy * 0.6;
+      score -= Math.hypot(futureX - W / 2, futureY - H / 2) / Math.max(W, H) * 3;
+      if (score > bestScore) { bestScore = score; bestAngle = a; }
     }
-    player.tx = bestPoint.x; player.ty = bestPoint.y;
+    const blend = Math.min(1, dt * 4);
+    demoMotion.vx += (Math.cos(bestAngle) * speed - demoMotion.vx) * blend;
+    demoMotion.vy += (Math.sin(bestAngle) * speed - demoMotion.vy) * blend;
+    player.tx = player.x + demoMotion.vx * 0.45;
+    player.ty = player.y + demoMotion.vy * 0.45;
   }
 
   // keyboard moves the target at a fixed speed
@@ -317,18 +341,19 @@ function update(dt) {
   const previousT = t;
   if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
   updatePlayer(dt * (sandbox ? timeScale : 1));
+  const difficulty = difficultyTime();
 
-  if (previousT < CFG.dartsFrom && t >= CFG.dartsFrom) showMessage('DARTS INCOMING', 1800);
-  if (previousT < CFG.burstsFrom && t >= CFG.burstsFrom) showMessage('BURST MODE', 1800);
+  if (!demo && previousT < CFG.dartsFrom && t >= CFG.dartsFrom) showMessage('DARTS INCOMING', 1800);
+  if (!demo && previousT < CFG.burstsFrom && t >= CFG.burstsFrom) showMessage('BURST MODE', 1800);
 
   // spawning
-  if (t > CFG.graceTime && !worldFrozen) {
-    spawnAcc += spawnRate(t) * dt;
+  if (t > (demo ? 0.6 : CFG.graceTime) && !worldFrozen) {
+    spawnAcc += spawnRate(difficulty) * dt;
     while (spawnAcc >= 1) {
       spawnAcc -= 1;
-      spawn(t > CFG.dartsFrom && Math.random() < CFG.dartChance ? 'dart' : 'normal');
+      spawn(difficulty > CFG.dartsFrom && Math.random() < CFG.dartChance ? 'dart' : 'normal');
     }
-    if (t > CFG.burstsFrom) {
+    if (difficulty > CFG.burstsFrom) {
       burstTimer += dt;
       if (burstTimer >= CFG.burstEvery) { burstTimer = 0; burst(); }
     }
@@ -340,6 +365,18 @@ function update(dt) {
     if (!worldFrozen) { e.x += e.vx * dt; e.y += e.vy * dt; e.warning = Math.max(0, (e.warning || 0) - dt); }
     const distance = Math.hypot(e.x - player.x, e.y - player.y);
     const hitDistance = (e.r + pr) * CFG.hitboxForgiveness;
+    const demoSafeDistance = e.r + pr + 0.8 * U;
+    if (demo && distance < demoSafeDistance) {
+      // Last-resort invisible guard: deflect anything the steering could not
+      // avoid between frames, so the attract-mode player never gets touched.
+      const nx = distance ? (e.x - player.x) / distance : 1;
+      const ny = distance ? (e.y - player.y) / distance : 0;
+      e.x = player.x + nx * demoSafeDistance; e.y = player.y + ny * demoSafeDistance;
+      const inward = e.vx * nx + e.vy * ny;
+      if (inward < 0) { e.vx -= inward * nx * 1.8; e.vy -= inward * ny * 1.8; }
+      e.nearMiss = true;
+      continue;
+    }
     if (distance < hitDistance) {
       if (!sandbox) return die();
       if (!e.hit) { e.hit = true; hits++; }
@@ -412,12 +449,12 @@ function draw(now) {
     const strength = 7 * (shakeUntil - now) / 500;
     ctx.translate((Math.random() - 0.5) * strength * 2, (Math.random() - 0.5) * strength * 2);
   }
-  ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(t);
+  ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(difficultyTime());
   ctx.fillRect(-12, -12, W + 24, H + 24);
 
   // Subtle moving grid makes speed and difficulty easier to feel.
   const grid = Math.max(30, 8 * U), offset = (t * 12) % grid;
-  ctx.strokeStyle = `rgba(120,155,205,${state === 'menu' ? 0.035 : 0.055 + Math.min(t, 60) / 1200})`;
+  ctx.strokeStyle = `rgba(120,155,205,${state === 'menu' ? 0.035 : 0.055 + Math.min(difficultyTime(), 60) / 1200})`;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let x = offset; x < W; x += grid) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
@@ -449,12 +486,14 @@ function draw(now) {
   // player
   if (state === 'play' || state === 'countdown') {
     // cursor dot + line to it, so you can see where the ball is heading when it lags behind the mouse
-    if (Math.hypot(player.tx - player.x, player.ty - player.y) > U) {
-      ctx.strokeStyle = 'rgba(94,242,194,0.3)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.tx, player.ty); ctx.stroke();
+    if (!demo) {
+      if (Math.hypot(player.tx - player.x, player.ty - player.y) > U) {
+        ctx.strokeStyle = 'rgba(94,242,194,0.3)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.tx, player.ty); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(player.tx, player.ty, 0.6 * U, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
     }
-    ctx.beginPath(); ctx.arc(player.tx, player.ty, 0.6 * U, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
 
     ctx.beginPath(); ctx.arc(player.x, player.y, CFG.playerRadius * U, 0, Math.PI * 2);
     ctx.fillStyle = '#5ef2c2'; ctx.shadowColor = '#5ef2c2'; ctx.shadowBlur = 18; ctx.fill(); ctx.shadowBlur = 0;
@@ -475,16 +514,32 @@ function draw(now) {
   } else if (state === 'play' && sandbox) {
     text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
   } else if (state === 'play') {
-    text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
-    if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
-    if (demo) text('DEMO · BERØR ELLER TRYKK FOR Å SPILLE', W / 2, H - S * 0.08, S * 0.03, '#ffd23f', 800);
-    if (now < messageUntil) {
-      const alpha = Math.min(1, (messageUntil - now) / 300);
-      text(message, W / 2, H / 2, S * 0.075, `rgba(255,210,63,${alpha})`, 900);
-    }
-    if (now < nearMissUntil) {
-      const alpha = (nearMissUntil - now) / 450;
-      text('NÆRE PÅ!', W / 2, H / 2 + S * 0.1, S * 0.035, `rgba(255,255,255,${alpha})`, 800);
+    if (demo) {
+      const pulse = 0.82 + 0.18 * Math.sin(now / 280);
+      text('KOM OG SPILL!', W / 2, S * 0.1, S * 0.085, `rgba(255,210,63,${pulse})`, 900);
+      text('BERØR ELLER TRYKK FOR Å STARTE', W / 2, S * 0.18, S * 0.028, 'rgba(255,255,255,0.78)', 700);
+
+      const boardY = H - S * 0.32, boardW = Math.min(W - 32, S * 0.62), boardH = S * 0.25;
+      ctx.fillStyle = 'rgba(5,7,12,0.68)';
+      ctx.fillRect(W / 2 - boardW / 2, boardY - S * 0.055, boardW, boardH);
+      text('TOPP 3', W / 2, boardY, S * 0.032, 'rgba(255,255,255,0.65)', 800);
+      const medal = ['#ffd23f', '#d6dde8', '#e0995e'];
+      if (top3.length) {
+        top3.forEach((r, i) => text(`${i + 1}.  ${fmt(r.time)} s${r.tag ? '   ' + r.tag : ''}`, W / 2, boardY + S * (0.055 + i * 0.047), S * 0.034, medal[i], 800));
+      } else {
+        text('Ingen resultater ennå', W / 2, boardY + S * 0.075, S * 0.03, 'rgba(255,255,255,0.55)', 500);
+      }
+    } else {
+      text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
+      if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+      if (now < messageUntil) {
+        const alpha = Math.min(1, (messageUntil - now) / 300);
+        text(message, W / 2, H / 2, S * 0.075, `rgba(255,210,63,${alpha})`, 900);
+      }
+      if (now < nearMissUntil) {
+        const alpha = (nearMissUntil - now) / 450;
+        text('NÆRE PÅ!', W / 2, H / 2 + S * 0.1, S * 0.035, `rgba(255,255,255,${alpha})`, 800);
+      }
     }
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);

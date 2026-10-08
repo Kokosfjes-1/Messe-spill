@@ -21,9 +21,11 @@ game without Azure; production API features require Azure Functions.
 The current test version experiments with a 3–2–1 countdown, device-aware
 instructions, near-miss feedback, difficulty milestone messages, stronger
 game-over effects, enemy entry warnings, a moving grid, and an unattended demo
-after 30 seconds of inactivity. Any pointer press or key press during the demo
-starts a real run. The slow-motion power and its fuel HUD have been removed.
-Sandbox pause uses **Space**.
+after 30 seconds of inactivity. The demo stays at the 30-second difficulty,
+uses collision-avoiding automatic movement, hides the timer, and displays the
+local top three. Any pointer press or key press during the demo starts a real
+run. The slow-motion power and its fuel HUD have been removed. Sandbox pause
+uses **Space**.
 
 1. Edit `test/index.html` and test locally. Push those changes to publish the
    test version alongside the current production game when ready.
