@@ -313,6 +313,7 @@ function updatePlayer(dt) {
 
 function update(dt) {
   const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
+  const pr = CFG.playerRadius * U;
   const previousT = t;
   if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
   updatePlayer(dt * (sandbox ? timeScale : 1));
