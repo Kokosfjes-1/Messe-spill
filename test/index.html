@@ -13,6 +13,15 @@
   .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
   #test-banner { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; z-index: 4; padding: 8px 12px; border-radius: 8px; background: #ffd23f; color: #171300; font: 700 12px system-ui, sans-serif; text-align: center; }
   #test-banner a { color: inherit; margin-left: 8px; }
+  #test-version { position: fixed; right: 12px; bottom: 12px; z-index: 4; padding: 5px 8px; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; background: rgba(5,7,12,0.72); color: rgba(255,255,255,0.68); font: 700 11px system-ui, sans-serif; letter-spacing: 0.08em; pointer-events: none; }
+  #test-version[hidden] { display: none; }
+  #test-controls { position: fixed; top: 14px; right: 14px; z-index: 5; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: calc(100vw - 28px); }
+  #test-controls[hidden] { display: none; }
+  #test-controls button { padding: 9px 13px; border: 1px solid rgba(255,255,255,0.24); border-radius: 8px; background: rgba(21,26,36,0.9); color: #fff; font: 700 12px system-ui, sans-serif; cursor: pointer; }
+  #test-controls button:hover { border-color: #ffd23f; color: #ffd23f; }
+  #test-controls button:disabled { opacity: 0.42; cursor: default; border-color: rgba(255,255,255,0.14); color: rgba(255,255,255,0.55); }
+  #record-button[data-recording="true"] { border-color: #ff4d5e; color: #ff9ba4; }
+  @media (max-width: 620px) { #test-version { bottom: 52px; } }
   /* score form shown after each run */
   #submit { position: fixed; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center;
             padding: 16px; background: rgba(5,7,12,0.6); font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #e6edf3; }
@@ -40,6 +49,12 @@
 <canvas id="c"></canvas>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
+<div id="test-version" hidden>V0.112</div>
+<div id="test-controls" hidden>
+  <button type="button" id="record-button">Ta opp demo</button>
+  <button type="button" id="export-button" disabled>Eksporter demo</button>
+  <button type="button" id="demo-button">Start demo</button>
+</div>
 <div id="submit" hidden>
   <form novalidate>
     <div class="time" id="s-time">0.0s</div>
@@ -61,6 +76,8 @@
 const TEST_MODE = /^\/test(?:\/|$)/.test(location.pathname);
 const STORAGE_PREFIX = TEST_MODE ? 'dodge-test-' : 'dodge-';
 document.getElementById('test-banner').hidden = !TEST_MODE;
+document.getElementById('test-version').hidden = !TEST_MODE;
+document.getElementById('test-controls').hidden = !TEST_MODE;
 if (TEST_MODE) document.title = 'Dodge – testmodus';
 
 // ---------------- TUNING ----------------
@@ -114,7 +131,12 @@ let countdownAt = 0, message = '', messageUntil = 0, nearMissUntil = 0;
 let demo = false, lastActivity = performance.now(), shakeUntil = 0, deathFlashUntil = 0;
 const ATTRACT_DELAY = 30000;
 const DEMO_DIFFICULTY = 30;
-const demoMotion = { vx: 0, vy: 0 };
+const demoMotion = { vx: 0, vy: 0, angle: 0, speedFactor: 0.34, nextDecision: 0 };
+const demoButton = document.getElementById('demo-button');
+const recordButton = document.getElementById('record-button');
+const exportButton = document.getElementById('export-button');
+const DEMO_RECORDING_KEY = 'dodge-test-demo-recording';
+let recording = false, recordingData = null, recordSampleAt = 0, recordingJustSaved = false, demoReplay = null, bundledDemoRecording = null;
 const prefersTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
 // Sandbox tools: ppa4 during a game. Independent test version: ppa5.
@@ -151,19 +173,133 @@ function sandboxKey(k) {
 function reset() {
   applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
-  demoMotion.vx = 0; demoMotion.vy = 0;
+  demoReplay = null;
+  demoMotion.vx = 0; demoMotion.vy = 0; demoMotion.angle = 0; demoMotion.speedFactor = 0.34; demoMotion.nextDecision = 0;
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
   state = 'countdown'; countdownAt = performance.now(); newBest = false;
   message = ''; nearMissUntil = 0; demo = false;
+  syncDemoButton();
 }
 
 function startDemo() {
   reset();
   demo = true;
-  demoMotion.vx = CFG.playerMaxSpeed * U * 0.45;
+  demoReplay = loadDemoRecording();
+  if (demoReplay) {
+    demoReplay.elapsed = 0; demoReplay.sampleIndex = 0; demoReplay.spawnIndex = 0;
+  }
+  demoMotion.vx = CFG.playerMaxSpeed * U * demoMotion.speedFactor;
   countdownAt = performance.now() - 3000;
   state = 'play';
+  syncDemoButton();
 }
+
+function stopDemo() {
+  demo = false; state = 'menu'; t = 0;
+  enemies = []; particles = []; demoReplay = null;
+  shakeUntil = 0; deathFlashUntil = 0;
+  registerActivity(); syncDemoButton();
+}
+
+function syncDemoButton() {
+  demoButton.textContent = demo ? 'Avslutt demo' : 'Start demo';
+}
+
+function validDemoRecording(data) {
+  return data && data.version === 1 && data.duration > 1 &&
+    Array.isArray(data.samples) && data.samples.length > 1 && Array.isArray(data.spawns);
+}
+
+function loadDemoRecording() {
+  try {
+    const data = JSON.parse(localStorage.getItem(DEMO_RECORDING_KEY));
+    if (validDemoRecording(data)) return data;
+  } catch (e) {}
+  return bundledDemoRecording;
+}
+
+async function loadBundledDemoRecording() {
+  if (!TEST_MODE) return;
+  try {
+    const res = await fetch('./demo-recording.json', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      if (validDemoRecording(data)) bundledDemoRecording = data;
+    }
+  } catch (e) {}
+  syncRecordButton();
+}
+
+function syncRecordButton() {
+  const saved = !!loadDemoRecording();
+  recordButton.dataset.recording = String(recording);
+  recordButton.textContent = recording ? 'Stopp og lagre' : saved ? 'Ta opp på nytt' : 'Ta opp demo';
+  exportButton.disabled = !saved || recording;
+}
+
+function exportDemoRecording() {
+  const data = loadDemoRecording();
+  if (!data) return;
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'demo-recording.json';
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function recordPlayerSample(force = false) {
+  if (!recording || !recordingData || state !== 'play') return;
+  if (!force && t < recordSampleAt) return;
+  recordingData.samples.push([
+    Math.round(t * 1000),
+    Math.round(player.x / W * 100000) / 100000,
+    Math.round(player.y / H * 100000) / 100000,
+  ]);
+  recordSampleAt = t + 1 / 30;
+}
+
+function recordEnemy(e) {
+  if (!recording || !recordingData || demo) return;
+  recordingData.spawns.push({
+    at: Math.round(t * 1000), x: e.x / W, y: e.y / H,
+    vx: e.vx / U, vy: e.vy / U, r: e.r / U,
+    dart: !!e.dart, burst: !!e.burst,
+  });
+}
+
+function startRecording() {
+  if (demo) stopDemo();
+  if (formOpen) closeForm();
+  reset();
+  recording = true; recordSampleAt = 0;
+  recordingData = { version: 1, duration: 0, samples: [], spawns: [] };
+  syncRecordButton();
+}
+
+function finishRecording() {
+  if (!recording || !recordingData) return false;
+  recordPlayerSample(true);
+  recordingData.duration = Math.round(t * 1000);
+  let saved = false;
+  if (recordingData.duration >= 1000 && recordingData.samples.length > 1) {
+    try { localStorage.setItem(DEMO_RECORDING_KEY, JSON.stringify(recordingData)); saved = true; } catch (e) {}
+  }
+  recording = false; recordingData = null; syncRecordButton();
+  return saved;
+}
+
+demoButton.addEventListener('click', () => {
+  if (recording) finishRecording();
+  if (demo) return stopDemo();
+  if (formOpen) closeForm();
+  startDemo();
+});
+
+recordButton.addEventListener('click', () => recording ? finishRecording() : startRecording());
+exportButton.addEventListener('click', exportDemoRecording);
+syncRecordButton();
+loadBundledDemoRecording();
 
 function registerActivity() { lastActivity = performance.now(); }
 
@@ -247,10 +383,11 @@ function spawn(kind) {
   }
   const dart = kind === 'dart';
   const sp = enemySpeed(difficultyTime()) * U * (dart ? 1.9 : 0.8 + Math.random() * 0.4);
-  enemies.push({
+  const enemy = {
     x: p.x, y: p.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
     r: (dart ? 1.2 : 1.5 + Math.random() * 1.3) * U, dart, born: t, warning: 0.5,
-  });
+  };
+  enemies.push(enemy); recordEnemy(enemy);
 }
 
 function burst() {
@@ -259,7 +396,8 @@ function burst() {
   const n = 5, gap = 0.22, sp = enemySpeed(difficultyTime()) * U * 0.9;
   for (let i = 0; i < n; i++) {
     const a = base + (i - (n - 1) / 2) * gap;
-    enemies.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t, warning: 0.5 });
+    const enemy = { x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t, warning: 0.5 };
+    enemies.push(enemy); recordEnemy(enemy);
   }
 }
 
@@ -287,34 +425,67 @@ function frame(now) {
 
 function updatePlayer(dt) {
   if (demo) {
-    // Pick a safe heading using predicted enemy positions. Momentum is rewarded,
-    // so the demo glides and curves instead of jumping between target points.
-    const speed = CFG.playerMaxSpeed * U * 0.62;
-    const currentAngle = Math.atan2(demoMotion.vy, demoMotion.vx);
-    let bestAngle = currentAngle, bestScore = -Infinity;
-    for (let i = 0; i < 32; i++) {
-      const a = i / 32 * Math.PI * 2;
-      const vx = Math.cos(a) * speed, vy = Math.sin(a) * speed;
-      let score = Math.cos(a - currentAngle) * 4;
-      for (const horizon of [0.18, 0.42, 0.75]) {
-        const px = player.x + vx * horizon, py = player.y + vy * horizon;
-        const wall = Math.min(px, W - px, py, H - py);
-        score += Math.min(12, wall / U) * 0.45;
-        for (const e of enemies) {
-          const clearance = Math.hypot(px - (e.x + e.vx * horizon), py - (e.y + e.vy * horizon)) - e.r;
-          if (clearance < 18 * U) score -= Math.pow((18 * U - clearance) / U, 2) * 0.12;
+    // Reconsider the route only occasionally. Strong direction persistence and
+    // slow acceleration make this look like deliberate human movement. An
+    // imminent collision can trigger an earlier, purposeful dodge.
+    const pr = CFG.playerRadius * U;
+    const imminent = enemies.some(e => {
+      const rx = e.x - player.x, ry = e.y - player.y;
+      const rvx = e.vx - demoMotion.vx, rvy = e.vy - demoMotion.vy;
+      const rv2 = rvx * rvx + rvy * rvy;
+      const closestAt = rv2 ? Math.max(0, Math.min(0.9, -(rx * rvx + ry * rvy) / rv2)) : 0;
+      const clearance = Math.hypot(rx + rvx * closestAt, ry + rvy * closestAt) - e.r - pr;
+      return clearance < 5 * U;
+    });
+    if (t >= demoMotion.nextDecision || imminent) {
+      const currentAngle = demoMotion.angle;
+      const nearest = enemies.reduce((min, e) => Math.min(min, Math.hypot(player.x - e.x, player.y - e.y) - e.r), Infinity);
+      demoMotion.speedFactor = imminent ? 0.48 : 0.3 + Math.random() * 0.09 + (nearest < 18 * U ? 0.06 : 0);
+      const plannedSpeed = CFG.playerMaxSpeed * U * demoMotion.speedFactor;
+      let bestAngle = currentAngle, bestScore = -Infinity;
+      for (let i = 0; i < 24; i++) {
+        const a = i / 24 * Math.PI * 2;
+        const vx = Math.cos(a) * plannedSpeed, vy = Math.sin(a) * plannedSpeed;
+        let score = Math.cos(a - currentAngle) * (imminent ? 3 : 9);
+        for (const horizon of [0.15, 0.35, 0.6, 0.9]) {
+          const px = player.x + vx * horizon, py = player.y + vy * horizon;
+          const wall = Math.min(px, W - px, py, H - py);
+          score += Math.min(12, wall / U) * 0.5;
+          for (const e of enemies) {
+            const clearance = Math.hypot(px - (e.x + e.vx * horizon), py - (e.y + e.vy * horizon)) - e.r - pr;
+            if (clearance < 14 * U) score -= Math.pow((14 * U - clearance) / U, 2) * 0.24;
+          }
         }
+        // Also score the closest point along each complete projected path, so
+        // a fast dart cannot slip between the sampled moments above.
+        for (const e of enemies) {
+          const rx = e.x - player.x, ry = e.y - player.y;
+          const rvx = e.vx - vx, rvy = e.vy - vy;
+          const rv2 = rvx * rvx + rvy * rvy;
+          const closestAt = rv2 ? Math.max(0, Math.min(1, -(rx * rvx + ry * rvy) / rv2)) : 0;
+          const clearance = Math.hypot(rx + rvx * closestAt, ry + rvy * closestAt) - e.r - pr;
+          if (clearance < 10 * U) score -= Math.pow((10 * U - clearance) / U, 2) * 0.5;
+        }
+        const futureX = player.x + vx * 0.7, futureY = player.y + vy * 0.7;
+        // Prefer the central third of the screen, but still allow a wider dodge
+        // when an enemy makes the middle unsafe.
+        const centerOffset = Math.hypot(
+          (futureX - W / 2) / (W * 0.32),
+          (futureY - H / 2) / (H * 0.32)
+        );
+        score -= centerOffset * 11;
+        if (centerOffset < 1) score += (1 - centerOffset) * 4;
+        if (score > bestScore) { bestScore = score; bestAngle = a; }
       }
-      // A gentle pull toward the center keeps the demonstration visible.
-      const futureX = player.x + vx * 0.6, futureY = player.y + vy * 0.6;
-      score -= Math.hypot(futureX - W / 2, futureY - H / 2) / Math.max(W, H) * 3;
-      if (score > bestScore) { bestScore = score; bestAngle = a; }
+      demoMotion.angle = bestAngle;
+      demoMotion.nextDecision = t + (imminent ? 0.22 : 0.7 + Math.random() * 0.55);
     }
-    const blend = Math.min(1, dt * 4);
-    demoMotion.vx += (Math.cos(bestAngle) * speed - demoMotion.vx) * blend;
-    demoMotion.vy += (Math.sin(bestAngle) * speed - demoMotion.vy) * blend;
-    player.tx = player.x + demoMotion.vx * 0.45;
-    player.ty = player.y + demoMotion.vy * 0.45;
+    const speed = CFG.playerMaxSpeed * U * demoMotion.speedFactor;
+    const blend = Math.min(1, dt * 2.1);
+    demoMotion.vx += (Math.cos(demoMotion.angle) * speed - demoMotion.vx) * blend;
+    demoMotion.vy += (Math.sin(demoMotion.angle) * speed - demoMotion.vy) * blend;
+    player.tx = player.x + demoMotion.vx * 0.5;
+    player.ty = player.y + demoMotion.vy * 0.5;
   }
 
   // keyboard moves the target at a fixed speed
@@ -335,12 +506,45 @@ function updatePlayer(dt) {
   else { player.x = player.tx; player.y = player.ty; }
 }
 
+function updateReplay(dt) {
+  demoReplay.elapsed += dt * 1000;
+  const elapsed = demoReplay.elapsed;
+  t = elapsed / 1000;
+
+  while (demoReplay.sampleIndex < demoReplay.samples.length - 2 &&
+         demoReplay.samples[demoReplay.sampleIndex + 1][0] <= elapsed) demoReplay.sampleIndex++;
+  const a = demoReplay.samples[demoReplay.sampleIndex];
+  const b = demoReplay.samples[Math.min(demoReplay.sampleIndex + 1, demoReplay.samples.length - 1)];
+  const mix = b[0] === a[0] ? 0 : Math.max(0, Math.min(1, (elapsed - a[0]) / (b[0] - a[0])));
+  player.x = player.tx = (a[1] + (b[1] - a[1]) * mix) * W;
+  player.y = player.ty = (a[2] + (b[2] - a[2]) * mix) * H;
+
+  while (demoReplay.spawnIndex < demoReplay.spawns.length && demoReplay.spawns[demoReplay.spawnIndex].at <= elapsed) {
+    const e = demoReplay.spawns[demoReplay.spawnIndex++];
+    enemies.push({
+      x: e.x * W, y: e.y * H, vx: e.vx * U, vy: e.vy * U, r: e.r * U,
+      dart: e.dart, burst: e.burst, born: t, warning: 0.5,
+    });
+  }
+
+  const m = 10 * U;
+  for (const e of enemies) {
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    e.warning = Math.max(0, (e.warning || 0) - dt);
+  }
+  enemies = enemies.filter(e => e.x > -m && e.x < W + m && e.y > -m && e.y < H + m);
+  updateParticles(dt);
+  if (elapsed >= demoReplay.duration) die();
+}
+
 function update(dt) {
+  if (demoReplay) return updateReplay(dt);
   const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
   const pr = CFG.playerRadius * U;
   const previousT = t;
   if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
   updatePlayer(dt * (sandbox ? timeScale : 1));
+  recordPlayerSample();
   const difficulty = difficultyTime();
 
   if (!demo && previousT < CFG.dartsFrom && t >= CFG.dartsFrom) showMessage('DARTS INCOMING', 1800);
@@ -365,18 +569,6 @@ function update(dt) {
     if (!worldFrozen) { e.x += e.vx * dt; e.y += e.vy * dt; e.warning = Math.max(0, (e.warning || 0) - dt); }
     const distance = Math.hypot(e.x - player.x, e.y - player.y);
     const hitDistance = (e.r + pr) * CFG.hitboxForgiveness;
-    const demoSafeDistance = e.r + pr + 0.8 * U;
-    if (demo && distance < demoSafeDistance) {
-      // Last-resort invisible guard: deflect anything the steering could not
-      // avoid between frames, so the attract-mode player never gets touched.
-      const nx = distance ? (e.x - player.x) / distance : 1;
-      const ny = distance ? (e.y - player.y) / distance : 0;
-      e.x = player.x + nx * demoSafeDistance; e.y = player.y + ny * demoSafeDistance;
-      const inward = e.vx * nx + e.vy * ny;
-      if (inward < 0) { e.vx -= inward * nx * 1.8; e.vy -= inward * ny * 1.8; }
-      e.nearMiss = true;
-      continue;
-    }
     if (distance < hitDistance) {
       if (!sandbox) return die();
       if (!e.hit) { e.hit = true; hits++; }
@@ -402,20 +594,18 @@ function showMessage(value, duration) {
 }
 
 function die() {
-  if (demo) {
-    state = 'menu'; demo = false; enemies = []; particles = []; t = 0;
-    lastActivity = performance.now() - ATTRACT_DELAY + 5000;
-    return;
-  }
+  const demoRun = demo;
+  recordingJustSaved = !demoRun && recording ? finishRecording() : false;
   state = 'over'; overAt = performance.now();
   shakeUntil = overAt + 500; deathFlashUntil = overAt + 180;
   releaseControls();
-  if (t > best) { best = t; newBest = true; try { localStorage.setItem(STORAGE_PREFIX + 'best', best); } catch (e) {} }
+  if (!demoRun && t > best) { best = t; newBest = true; try { localStorage.setItem(STORAGE_PREFIX + 'best', best); } catch (e) {} }
   for (let i = 0; i < 40; i++) {
     const a = Math.random() * Math.PI * 2, s = (20 + Math.random() * 60) * U;
     particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color: i % 3 ? '#5ef2c2' : '#ffffff', size: 3 + Math.random() * 4 });
   }
-  setTimeout(openForm, 1200);
+  if (demoRun) setTimeout(() => { if (state === 'over' && demo) startDemo(); }, 1600);
+  else setTimeout(openForm, 1200);
 }
 
 function updateParticles(dt) {
@@ -553,12 +743,17 @@ function draw(now) {
       top3.forEach((r, i) => text(`${i + 1}.  ${fmt(r.time)} s${r.tag ? '   ' + r.tag : ''}`, W / 2, H / 2 + S * (0.26 + i * 0.055), S * 0.04, medal[i], 800));
     }
   } else if (state === 'over' && !formOpen) {
-    text(fmt(t) + ' s', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
-    text(verdict(t), W / 2, H / 2 + S * 0.05, S * 0.045, '#ffd23f', 600);
-    text(newBest ? 'NY REKORD!' : `rekord ${fmt(best)} s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
-    if (performance.now() - overAt > 900) {
-      const pulse = 0.5 + 0.5 * Math.sin(now / 300);
-      text('trykk for å spille igjen', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+    if (demo) {
+      text('TREFF!', W / 2, H / 2 - S * 0.03, S * 0.14, '#fff', 900);
+      text('DEMO STARTER PÅ NYTT', W / 2, H / 2 + S * 0.1, S * 0.032, '#ffd23f', 700);
+    } else {
+      text(fmt(t) + ' s', W / 2, H / 2 - S * 0.08, S * 0.16, '#fff', 900);
+      text(verdict(t), W / 2, H / 2 + S * 0.05, S * 0.045, '#ffd23f', 600);
+      text(newBest ? 'NY REKORD!' : `rekord ${fmt(best)} s`, W / 2, H / 2 + S * 0.12, S * 0.035, newBest ? '#5ef2c2' : 'rgba(255,255,255,0.6)', 600);
+      if (performance.now() - overAt > 900) {
+        const pulse = 0.5 + 0.5 * Math.sin(now / 300);
+        text('trykk for å spille igjen', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+      }
     }
   }
 
@@ -706,7 +901,8 @@ function openForm() {
   $('s-time').textContent = fmt(t) + ' s';
   $('s-verdict').textContent = verdict(t);
   $('s-phone').value = ''; $('s-tag').value = ''; $('s-consent').checked = false;
-  $('s-status').textContent = '';
+  $('s-status').textContent = recordingJustSaved ? 'Demoopptaket er lagret i denne nettleseren.' : '';
+  recordingJustSaved = false;
   $('s-send').disabled = $('s-skip').disabled = false;
   $('submit').hidden = false;
   $('s-tag').focus();

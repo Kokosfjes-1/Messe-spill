@@ -22,10 +22,24 @@ The current test version experiments with a 3–2–1 countdown, device-aware
 instructions, near-miss feedback, difficulty milestone messages, stronger
 game-over effects, enemy entry warnings, a moving grid, and an unattended demo
 after 30 seconds of inactivity. The demo stays at the 30-second difficulty,
-uses collision-avoiding automatic movement, hides the timer, and displays the
-local top three. Any pointer press or key press during the demo starts a real
-run. The slow-motion power and its fuel HUD have been removed. Sandbox pause
-uses **Space**.
+uses predictive automatic movement, hides the timer, and displays the local top
+three. A demo collision uses the normal impact animation before automatically
+restarting. Any pointer press or key press during the demo starts a real run.
+Use **Ta opp demo** to start a real run while recording player positions and
+enemy spawns at 30 samples per second. The recording is saved in localStorage
+when the player is hit or **Stopp og lagre** is pressed. Automatic and manual
+demo mode replay the saved run exactly; the automatic AI remains the fallback
+until a recording exists. The other test-only button starts or stops the demo
+immediately.
+
+Press **Eksporter demo** to download the active recording as
+`demo-recording.json`. To bundle it permanently with the test site, place that
+file at `test/demo-recording.json` and refresh `/test/`. Test mode automatically
+loads the bundled file when the browser has no local recording. Commit
+that JSON file with the site to make the recording available on other devices.
+
+The slow-motion power and its fuel HUD have been removed. Sandbox pause uses
+**Space**. The current test build is marked **V0.112** in the bottom-right corner.
 
 1. Edit `test/index.html` and test locally. Push those changes to publish the
    test version alongside the current production game when ready.
