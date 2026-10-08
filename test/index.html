@@ -8,11 +8,6 @@
   html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
   canvas { display: block; width: 100vw; height: 100vh; cursor: none; }
   .logo { --h: clamp(16px, 3.6vmin, 44px); position: fixed; top: 16px; left: 16px; z-index: 2; pointer-events: none; }
-  #fuel-hud { position: fixed; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: 50vw; height: 44px; border-radius: 14px; z-index: 2; background: #172230; color: #fff; pointer-events: none; overflow: hidden; box-shadow: 0 3px 16px rgba(0,0,0,0.3); font: 700 clamp(9px, 1.5vmin, 12px)/1.2 system-ui, sans-serif; }
-  #fuel-fill { position: absolute; inset: 0; background: #237d69; transform-origin: left; }
-  #fuel-hud[data-active="true"] #fuel-fill { background: #275dc0; }
-  #fuel-label { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; text-align: center; }
-  #fuel-label > span:last-child { font-size: 0.85em; font-weight: 500; }
   /* crop away the empty padding in the source image (960x367, text ≈ x30–930, y108–258) */
   .logo .crop { position: relative; overflow: hidden; height: var(--h); width: calc(var(--h) * 6); }
   .logo img { position: absolute; width: calc(var(--h) * 6.4); left: calc(var(--h) * -0.2); top: calc(var(--h) * -0.72); }
@@ -43,10 +38,6 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="fuel-hud" role="meter" aria-label="Drivstoff til saktefilm" aria-valuemin="0" aria-valuemax="4" aria-valuenow="4">
-  <div id="fuel-fill"></div>
-  <div id="fuel-label"><span id="fuel-value">SAKTEFILM · 4,0 / 4,0 s</span><span>Hold venstreklikk / mellomrom</span></div>
-</div>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
 <div id="submit" hidden>
@@ -114,16 +105,15 @@ addEventListener('resize', resize); resize();
 let best = 0;
 try { best = parseFloat(localStorage.getItem(STORAGE_PREFIX + 'best')) || 0; } catch (e) {}
 
-let state = 'menu'; // menu | play | over
+let state = 'menu'; // menu | countdown | play | over
 let t = 0, spawnAcc = 0, burstTimer = 0, overAt = 0, newBest = false;
 let enemies = [], particles = [];
 const player = { x: 0, y: 0, tx: 0, ty: 0 };
 const keys = {};
-const SLOWMO = { capacity: 4, rechargeRate: 1 / 8, speed: 0.6, releaseTime: 0.25 };
-let fuel = SLOWMO.capacity, leftMouseHeld = false, slowActive = false, slowAmount = 0;
-const fuelHud = document.getElementById('fuel-hud');
-const fuelFill = document.getElementById('fuel-fill');
-const fuelValue = document.getElementById('fuel-value');
+let countdownAt = 0, message = '', messageUntil = 0, nearMissUntil = 0;
+let demo = false, lastActivity = performance.now(), shakeUntil = 0, deathFlashUntil = 0;
+const ATTRACT_DELAY = 30000;
+const prefersTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 
 // Sandbox tools: ppa4 during a game. Independent test version: ppa5.
 const SECRET = 'ppa4';
@@ -138,7 +128,7 @@ function exitSandbox() {
 }
 
 function sandboxKey(k) {
-  if (k === 'k') paused = !paused;
+  if (k === ' ') paused = !paused;
   else if (k === 'h') showHitboxes = !showHitboxes;
   else if (k === 'f') frozen = !frozen;
   else if (k === 't') freezeTime = !freezeTime;
@@ -159,29 +149,35 @@ function sandboxKey(k) {
 function reset() {
   applySettings(); // difficulty from /admin only changes between runs
   t = 0; spawnAcc = 0; burstTimer = 0; enemies = []; particles = [];
-  fuel = SLOWMO.capacity; slowActive = false; slowAmount = 0;
   player.x = player.tx = W / 2; player.y = player.ty = H / 2;
-  state = 'play'; newBest = false;
+  state = 'countdown'; countdownAt = performance.now(); newBest = false;
+  message = ''; nearMissUntil = 0; demo = false;
 }
+
+function startDemo() {
+  reset();
+  demo = true;
+  countdownAt = performance.now() - 3000;
+  state = 'play';
+}
+
+function registerActivity() { lastActivity = performance.now(); }
 
 // ---------- input ----------
 let pointerType = 'mouse', lastTouch = null;
-// Mouse events also catch left-click while another mouse button is held.
-cv.addEventListener('mousedown', e => {
-  if (e.button === 0) { e.preventDefault(); leftMouseHeld = true; }
-});
-addEventListener('mouseup', e => { if (e.button === 0) leftMouseHeld = false; });
 function releaseControls() {
-  leftMouseHeld = false; slowActive = false; lastTouch = null;
+  lastTouch = null;
   for (const key of Object.keys(keys)) keys[key] = false;
 }
 addEventListener('blur', releaseControls);
 addEventListener('pointercancel', releaseControls);
 document.addEventListener('visibilitychange', () => {
   releaseControls();
-  last = performance.now(); // Returning to the tab must not spend/recharge hidden time.
+  last = performance.now(); // Returning to the tab must not create a giant frame.
 });
 cv.addEventListener('pointerdown', e => {
+  registerActivity();
+  if (demo) { reset(); return; }
   pointerType = e.pointerType;
   lastTouch = { x: e.clientX, y: e.clientY };
   if (state === 'menu') reset();
@@ -189,6 +185,7 @@ cv.addEventListener('pointerdown', e => {
   if (pointerType === 'mouse') { player.tx = e.clientX; player.ty = e.clientY; }
 });
 cv.addEventListener('pointermove', e => {
+  registerActivity();
   pointerType = e.pointerType;
   if (e.pointerType === 'mouse') { player.tx = e.clientX; player.ty = e.clientY; }
   else if (lastTouch) {
@@ -201,6 +198,8 @@ cv.addEventListener('pointermove', e => {
 addEventListener('pointerup', () => { lastTouch = null; });
 addEventListener('keydown', e => {
   if (formOpen) return;
+  registerActivity();
+  if (demo) { reset(); return; }
   const k = e.key.toLowerCase();
   if (k === ' ') e.preventDefault();
   keys[k] = true;
@@ -245,7 +244,7 @@ function spawn(kind) {
   const sp = enemySpeed(t) * U * (dart ? 1.9 : 0.8 + Math.random() * 0.4);
   enemies.push({
     x: p.x, y: p.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-    r: (dart ? 1.2 : 1.5 + Math.random() * 1.3) * U, dart, born: t,
+    r: (dart ? 1.2 : 1.5 + Math.random() * 1.3) * U, dart, born: t, warning: 0.5,
   });
 }
 
@@ -255,80 +254,71 @@ function burst() {
   const n = 5, gap = 0.22, sp = enemySpeed(t) * U * 0.9;
   for (let i = 0; i < n; i++) {
     const a = base + (i - (n - 1) / 2) * gap;
-    enemies.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t });
+    enemies.push({ x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: 1.6 * U, dart: false, burst: true, born: t, warning: 0.5 });
   }
 }
 
 // ---------- loop ----------
 let last = performance.now();
 function frame(now) {
-  const realDt = Math.max(0, (now - last) / 1000); last = now;
-  const dt = Math.min(0.05, realDt);
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
   if (dt > 0) fps += (1 / dt - fps) * 0.05;
-  slowActive = false;
   if (!document.hidden) {
-    if (state === 'play') { if (!(sandbox && paused)) advanceGame(realDt); }
+    if (state === 'menu' && now - lastActivity > ATTRACT_DELAY) startDemo();
+    if (state === 'countdown') {
+      updatePlayer(dt);
+      if (now - countdownAt >= 3000) {
+        state = 'play'; last = now;
+        showMessage('KJØR!', 650);
+      }
+    } else if (state === 'play') {
+      if (!(sandbox && paused)) update(dt);
+    }
     else updateParticles(dt);
   }
   draw(now);
   requestAnimationFrame(frame);
 }
 
-function advanceGame(realDt) {
-  // Fuel uses wall-clock seconds. Slow motion affects the world, not the player.
-  const held = leftMouseHeld || keys[' '];
-  let slowedSeconds = 0;
-  if (held) {
-    // Activation is instant, including when pressed again during the release.
-    slowedSeconds = Math.min(fuel, realDt);
-    fuel = Math.max(0, fuel - slowedSeconds);
-    if (fuel < 1e-9) fuel = 0;
-    slowAmount = fuel > 0 ? 1 : 0;
-  } else {
-    let releaseSeconds = Math.min(realDt, slowAmount * SLOWMO.releaseTime);
-    let nextAmount = Math.max(0, slowAmount - releaseSeconds / SLOWMO.releaseTime);
-    // Integrate the linear fade exactly: a complete release costs 0.125 fuel
-    // seconds. Tapping cannot obtain any slowdown without paying for it.
-    slowedSeconds = (slowAmount + nextAmount) * 0.5 * releaseSeconds;
-    if (slowedSeconds > fuel) {
-      // Stop the transition at exhaustion; only the remaining normal-speed
-      // part of this frame is eligible for recharge.
-      const atEmpty = Math.sqrt(Math.max(0, slowAmount * slowAmount - 2 * fuel / SLOWMO.releaseTime));
-      releaseSeconds = 2 * fuel / (slowAmount + atEmpty);
-      slowedSeconds = fuel;
-      nextAmount = 0;
+function updatePlayer(dt) {
+  if (demo) {
+    // Seek the safest of a handful of moving targets for an unattended demo.
+    let bestPoint = { x: W / 2, y: H / 2 }, bestClearance = -1;
+    for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2 + t * 0.35;
+      const candidate = { x: W / 2 + Math.cos(a) * W * 0.32, y: H / 2 + Math.sin(a) * H * 0.32 };
+      const clearance = enemies.reduce((min, e) => Math.min(min, Math.hypot(candidate.x - e.x, candidate.y - e.y)), Infinity);
+      if (clearance > bestClearance) { bestClearance = clearance; bestPoint = candidate; }
     }
-    slowAmount = nextAmount;
-    fuel = Math.min(SLOWMO.capacity, Math.max(0, fuel - slowedSeconds) +
-      Math.max(0, realDt - releaseSeconds) * SLOWMO.rechargeRate);
+    player.tx = bestPoint.x; player.ty = bestPoint.y;
   }
-  slowActive = slowedSeconds > 0;
-  // The average slowdown also covers release/exhaustion within a frame.
-  const speed = realDt > 0 ? 1 - (1 - SLOWMO.speed) * slowedSeconds / realDt : 1;
-  const playerDt = Math.min(0.05, realDt) * (sandbox ? timeScale : 1);
-  update(playerDt * speed, playerDt);
-}
-
-function update(dt, playerDt = dt) {
-  const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
-  if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
 
   // keyboard moves the target at a fixed speed
   const kx = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
   const ky = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
   if (kx || ky) {
     const l = Math.hypot(kx, ky);
-    player.tx += kx / l * CFG.keyboardSpeed * U * playerDt;
-    player.ty += ky / l * CFG.keyboardSpeed * U * playerDt;
+    player.tx += kx / l * CFG.keyboardSpeed * U * dt;
+    player.ty += ky / l * CFG.keyboardSpeed * U * dt;
   }
 
   const pr = CFG.playerRadius * U;
   player.tx = Math.max(pr, Math.min(W - pr, player.tx));
   player.ty = Math.max(pr, Math.min(H - pr, player.ty));
   const dx = player.tx - player.x, dy = player.ty - player.y, d = Math.hypot(dx, dy);
-  const maxStep = CFG.playerMaxSpeed * U * playerDt;
+  const maxStep = CFG.playerMaxSpeed * U * dt;
   if (d > maxStep) { player.x += dx / d * maxStep; player.y += dy / d * maxStep; }
   else { player.x = player.tx; player.y = player.ty; }
+}
+
+function update(dt) {
+  const worldFrozen = sandbox && frozen; // enemies, spawns and clock stop; you can still move
+  const previousT = t;
+  if (!(sandbox && freezeTime) && !worldFrozen) t += dt;
+  updatePlayer(dt * (sandbox ? timeScale : 1));
+
+  if (previousT < CFG.dartsFrom && t >= CFG.dartsFrom) showMessage('DARTS INCOMING', 1800);
+  if (previousT < CFG.burstsFrom && t >= CFG.burstsFrom) showMessage('BURST MODE', 1800);
 
   // spawning
   if (t > CFG.graceTime && !worldFrozen) {
@@ -346,27 +336,48 @@ function update(dt, playerDt = dt) {
   // move enemies, collide
   const m = 10 * U;
   for (const e of enemies) {
-    if (!worldFrozen) { e.x += e.vx * dt; e.y += e.vy * dt; }
-    if (Math.hypot(e.x - player.x, e.y - player.y) < (e.r + pr) * CFG.hitboxForgiveness) {
+    if (!worldFrozen) { e.x += e.vx * dt; e.y += e.vy * dt; e.warning = Math.max(0, (e.warning || 0) - dt); }
+    const distance = Math.hypot(e.x - player.x, e.y - player.y);
+    const hitDistance = (e.r + pr) * CFG.hitboxForgiveness;
+    if (distance < hitDistance) {
       if (!sandbox) return die();
       if (!e.hit) { e.hit = true; hits++; }
       e.flash = 0.3;
+    } else if (!e.nearMiss && e.closestDistance < hitDistance + 2.2 * U && distance > e.closestDistance) {
+      e.nearMiss = true;
+      nearMissUntil = performance.now() + 450;
+      for (let i = 0; i < 7; i++) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * 18 * U, vy: Math.sin(a) * 18 * U, life: 0.45, color: '#ffffff', size: 2 });
+      }
     }
+    e.closestDistance = Math.min(e.closestDistance ?? Infinity, distance);
     if (e.flash) e.flash = Math.max(0, e.flash - dt);
   }
   enemies = enemies.filter(e => e.x > -m && e.x < W + m && e.y > -m && e.y < H + m);
   updateParticles(dt);
 }
 
+function showMessage(value, duration) {
+  message = value;
+  messageUntil = performance.now() + duration;
+}
+
 function die() {
+  if (demo) {
+    state = 'menu'; demo = false; enemies = []; particles = []; t = 0;
+    lastActivity = performance.now() - ATTRACT_DELAY + 5000;
+    return;
+  }
   state = 'over'; overAt = performance.now();
+  shakeUntil = overAt + 500; deathFlashUntil = overAt + 180;
   releaseControls();
   if (t > best) { best = t; newBest = true; try { localStorage.setItem(STORAGE_PREFIX + 'best', best); } catch (e) {} }
   for (let i = 0; i < 40; i++) {
     const a = Math.random() * Math.PI * 2, s = (20 + Math.random() * 60) * U;
-    particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 });
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, color: i % 3 ? '#5ef2c2' : '#ffffff', size: 3 + Math.random() * 4 });
   }
-  setTimeout(openForm, 700);
+  setTimeout(openForm, 1200);
 }
 
 function updateParticles(dt) {
@@ -394,18 +405,40 @@ function text(str, x, y, size, color, weight = 700) {
 }
 
 function draw(now) {
-  fuelFill.style.transform = `scaleX(${fuel / SLOWMO.capacity})`;
-  fuelHud.dataset.active = String(slowActive);
-  fuelHud.setAttribute('aria-valuenow', fuel.toFixed(2));
-  fuelValue.textContent = `${slowActive ? 'SAKTEFILM AKTIV' : fuel === 0 ? 'TOM – SLIPP' : 'SAKTEFILM'} · ${fmt(fuel)} / ${fmt(SLOWMO.capacity)} s`;
+  const shaking = now < shakeUntil;
+  ctx.save();
+  if (shaking) {
+    const strength = 7 * (shakeUntil - now) / 500;
+    ctx.translate((Math.random() - 0.5) * strength * 2, (Math.random() - 0.5) * strength * 2);
+  }
   ctx.fillStyle = state === 'menu' ? '#0b0d12' : stageColor(t);
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(-12, -12, W + 24, H + 24);
+
+  // Subtle moving grid makes speed and difficulty easier to feel.
+  const grid = Math.max(30, 8 * U), offset = (t * 12) % grid;
+  ctx.strokeStyle = `rgba(120,155,205,${state === 'menu' ? 0.035 : 0.055 + Math.min(t, 60) / 1200})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = offset; x < W; x += grid) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = offset; y < H; y += grid) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
 
   // enemies
   for (const e of enemies) {
+    if (e.warning > 0) {
+      const wx = Math.max(12, Math.min(W - 12, e.x));
+      const wy = Math.max(12, Math.min(H - 12, e.y));
+      ctx.globalAlpha = Math.min(1, e.warning * 3);
+      ctx.strokeStyle = e.dart ? '#ffd23f' : e.burst ? '#ff7ad9' : '#ff4d5e';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(wx, wy, 7 + 5 * Math.sin(now / 70), 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
     ctx.fillStyle = e.flash ? '#ffffff' : e.dart ? '#ffd23f' : e.burst ? '#ff7ad9' : '#ff4d5e';
+    ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
     ctx.fill();
+    ctx.shadowBlur = 0;
     if (e.dart) { // little trail so darts read as fast
       ctx.strokeStyle = 'rgba(255,210,63,0.35)'; ctx.lineWidth = e.r;
       ctx.beginPath(); ctx.moveTo(e.x, e.y); ctx.lineTo(e.x - e.vx * 0.08, e.y - e.vy * 0.08); ctx.stroke();
@@ -413,7 +446,7 @@ function draw(now) {
   }
 
   // player
-  if (state === 'play') {
+  if (state === 'play' || state === 'countdown') {
     // cursor dot + line to it, so you can see where the ball is heading when it lags behind the mouse
     if (Math.hypot(player.tx - player.x, player.ty - player.y) > U) {
       ctx.strokeStyle = 'rgba(94,242,194,0.3)'; ctx.lineWidth = 2;
@@ -428,22 +461,36 @@ function draw(now) {
   if (sandbox && state === 'play') drawSandbox();
   for (const p of particles) {
     ctx.globalAlpha = Math.max(0, p.life);
-    ctx.fillStyle = '#5ef2c2'; ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    const size = p.size || 3;
+    ctx.fillStyle = p.color || '#5ef2c2'; ctx.fillRect(p.x - size, p.y - size, size * 2, size * 2);
   }
   ctx.globalAlpha = 1;
 
   const S = Math.min(W, H);
-  if (state === 'play' && sandbox) {
+  if (state === 'countdown') {
+    const left = Math.max(1, 3 - Math.floor((now - countdownAt) / 1000));
+    text(String(left), W / 2, H / 2, S * 0.22, '#fff', 900);
+    text(prefersTouch ? 'Dra hvor som helst for å bevege deg' : 'Bruk musen eller WASD / piltastene', W / 2, H / 2 + S * 0.15, S * 0.032, 'rgba(255,255,255,0.7)', 500);
+  } else if (state === 'play' && sandbox) {
     text('SANDBOX', W / 2, S * 0.06, S * 0.04, '#ffd23f', 800);
   } else if (state === 'play') {
     text(fmt(t), W / 2, S * 0.09, S * 0.09, 'rgba(255,255,255,0.9)');
     if (best > 0) text(`rekord ${fmt(best)}`, W / 2, S * 0.16, S * 0.03, 'rgba(255,255,255,0.45)', 500);
+    if (demo) text('DEMO · BERØR ELLER TRYKK FOR Å SPILLE', W / 2, H - S * 0.08, S * 0.03, '#ffd23f', 800);
+    if (now < messageUntil) {
+      const alpha = Math.min(1, (messageUntil - now) / 300);
+      text(message, W / 2, H / 2, S * 0.075, `rgba(255,210,63,${alpha})`, 900);
+    }
+    if (now < nearMissUntil) {
+      const alpha = (nearMissUntil - now) / 450;
+      text('NÆRE PÅ!', W / 2, H / 2 + S * 0.1, S * 0.035, `rgba(255,255,255,${alpha})`, 800);
+    }
   } else if (state === 'menu') {
     text('DODGE', W / 2, H / 2 - S * 0.24, S * 0.14, '#fff', 900);
     text('Beveg deg. Ikke bli truffet.', W / 2, H / 2 - S * 0.1, S * 0.045, 'rgba(255,255,255,0.8)', 500);
     text('Hvor lenge kan du overleve?', W / 2, H / 2 - S * 0.03, S * 0.035, '#ffd23f', 600);
     const pulse = 0.5 + 0.5 * Math.sin(now / 300);
-    text('trykk / klikk / mellomrom for å starte', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
+    text(prefersTouch ? 'trykk for å starte · dra for å bevege deg' : 'klikk / mellomrom for å starte · mus eller WASD', W / 2, H / 2 + S * 0.08, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
     if (top3.length) {
       text('TOPP 3', W / 2, H / 2 + S * 0.2, S * 0.03, 'rgba(255,255,255,0.5)', 800);
       const medal = ['#ffd23f', '#d6dde8', '#e0995e'];
@@ -458,6 +505,17 @@ function draw(now) {
       text('trykk for å spille igjen', W / 2, H / 2 + S * 0.24, S * 0.03, `rgba(255,255,255,${0.4 + pulse * 0.5})`, 500);
     }
   }
+
+  // Vignette and impact flash sit above the world while keeping the UI readable.
+  const vignette = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.72);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, `rgba(0,0,0,${state === 'play' ? 0.28 : 0.4})`);
+  ctx.fillStyle = vignette; ctx.fillRect(-12, -12, W + 24, H + 24);
+  if (now < deathFlashUntil) {
+    ctx.fillStyle = `rgba(255,255,255,${(deathFlashUntil - now) / 180 * 0.75})`;
+    ctx.fillRect(-12, -12, W + 24, H + 24);
+  }
+  ctx.restore();
 }
 
 function drawSandbox() {
@@ -493,8 +551,7 @@ function drawSandbox() {
     `spillfart   ${timeScale}x${paused ? '  PAUSE' : ''}${frozen ? '  FRYST' : ''}`,
     `fps         ${fps.toFixed(0)}`,
     ``,
-    `K pause  [ ] spillfart`,
-    `mellomrom / venstreklikk saktefilm`,
+    `mellomrom pause  [ ] spillfart`,
     `F frys verden (du kan bevege deg)`,
     `+ / -  tid ±10s   T lås tid`,
     `N fiende  X dart  B burst  C tøm`,
@@ -604,6 +661,7 @@ function closeForm() {
   $('submit').hidden = true;
   formOpen = false;
   state = 'menu'; enemies = []; particles = [];
+  registerActivity();
   loadTop(); loadSettings();
 }
 

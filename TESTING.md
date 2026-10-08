@@ -18,22 +18,12 @@ game without Azure; production API features require Azure Functions.
 
 ## Workflow
 
-The current test version includes a rounded slow-motion fuel bar near the bottom,
-centered at 50% screen width and 44px tall, above the test-mode banner. Hold
-left-click or Space to run enemies, spawning, effects, and the timer at 60%
-speed while the player keeps full movement speed with mouse, touch, or keyboard.
-Fuel lasts four real seconds and recharges by one second per eight
-real seconds at normal speed with both controls released (32 seconds from empty
-to full).
-Releasing both controls returns to normal speed linearly over 0.25 real seconds.
-Fuel drains in proportion to the remaining slowdown during that transition:
-a complete release costs another 0.125 seconds of fuel. Recharge starts only
-after the transition ends. If fuel runs out, normal speed resumes immediately;
-pressing again during a release immediately restores 60% speed if fuel remains.
-Holding either control on empty keeps normal speed and prevents recharging.
-Each new run starts full. Fuel does not change outside a run, while sandbox
-pause is active, or while the tab is hidden. In this test version, sandbox pause
-has moved to **K** so Space can activate slow motion.
+The current test version experiments with a 3–2–1 countdown, device-aware
+instructions, near-miss feedback, difficulty milestone messages, stronger
+game-over effects, enemy entry warnings, a moving grid, and an unattended demo
+after 30 seconds of inactivity. Any pointer press or key press during the demo
+starts a real run. The slow-motion power and its fuel HUD have been removed.
+Sandbox pause uses **Space**.
 
 1. Edit `test/index.html` and test locally. Push those changes to publish the
    test version alongside the current production game when ready.
