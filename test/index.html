@@ -49,7 +49,7 @@
 <canvas id="c"></canvas>
 <div class="logo"><div class="crop"><img src="/img/ikomm.png" alt="IKOMM"></div></div>
 <div id="test-banner" hidden>TESTMODUS · Kun lokale testresultater <a href="/">Avslutt</a></div>
-<div id="test-version" hidden>V0.112</div>
+<div id="test-version" hidden>V0.113</div>
 <div id="test-controls" hidden>
   <button type="button" id="record-button">Ta opp demo</button>
   <button type="button" id="export-button" disabled>Eksporter demo</button>
@@ -184,10 +184,8 @@ function reset() {
 function startDemo() {
   reset();
   demo = true;
-  demoReplay = loadDemoRecording();
-  if (demoReplay) {
-    demoReplay.elapsed = 0; demoReplay.sampleIndex = 0; demoReplay.spawnIndex = 0;
-  }
+  const savedReplay = loadDemoRecording();
+  demoReplay = savedReplay ? prepareDemoReplay(savedReplay) : null;
   demoMotion.vx = CFG.playerMaxSpeed * U * demoMotion.speedFactor;
   countdownAt = performance.now() - 3000;
   state = 'play';
@@ -206,8 +204,32 @@ function syncDemoButton() {
 }
 
 function validDemoRecording(data) {
-  return data && data.version === 1 && data.duration > 1 &&
+  return data && (data.version === 1 || data.version === 2) && data.duration > 1 &&
     Array.isArray(data.samples) && data.samples.length > 1 && Array.isArray(data.spawns);
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function prepareDemoReplay(data) {
+  let widthUnits = Number(data.viewport?.widthUnits);
+  let heightUnits = Number(data.viewport?.heightUnits);
+  if (!(widthUnits > 0 && heightUnits > 0)) {
+    // V1 recordings predate viewport metadata. Edge spawns sit exactly four
+    // units outside the screen, which lets us recover the original aspect ratio.
+    const xEdges = [], yEdges = [];
+    for (const e of data.spawns) {
+      if (e.x < 0) xEdges.push(-e.x); else if (e.x > 1) xEdges.push(e.x - 1);
+      if (e.y < 0) yEdges.push(-e.y); else if (e.y > 1) yEdges.push(e.y - 1);
+    }
+    const xMargin = median(xEdges), yMargin = median(yEdges);
+    widthUnits = xMargin ? 4 / xMargin : W / U;
+    heightUnits = yMargin ? 4 / yMargin : H / U;
+  }
+  return { ...data, widthUnits, heightUnits, elapsed: 0, sampleIndex: 0, spawnIndex: 0, scale: U };
 }
 
 function loadDemoRecording() {
@@ -273,7 +295,10 @@ function startRecording() {
   if (formOpen) closeForm();
   reset();
   recording = true; recordSampleAt = 0;
-  recordingData = { version: 1, duration: 0, samples: [], spawns: [] };
+  recordingData = {
+    version: 2, duration: 0, samples: [], spawns: [],
+    viewport: { widthUnits: W / U, heightUnits: H / U },
+  };
   syncRecordButton();
 }
 
@@ -510,24 +535,30 @@ function updateReplay(dt) {
   demoReplay.elapsed += dt * 1000;
   const elapsed = demoReplay.elapsed;
   t = elapsed / 1000;
+  const scale = Math.min(W / demoReplay.widthUnits, H / demoReplay.heightUnits);
+  const offsetX = (W - demoReplay.widthUnits * scale) / 2;
+  const offsetY = (H - demoReplay.heightUnits * scale) / 2;
+  demoReplay.scale = scale;
 
   while (demoReplay.sampleIndex < demoReplay.samples.length - 2 &&
          demoReplay.samples[demoReplay.sampleIndex + 1][0] <= elapsed) demoReplay.sampleIndex++;
   const a = demoReplay.samples[demoReplay.sampleIndex];
   const b = demoReplay.samples[Math.min(demoReplay.sampleIndex + 1, demoReplay.samples.length - 1)];
   const mix = b[0] === a[0] ? 0 : Math.max(0, Math.min(1, (elapsed - a[0]) / (b[0] - a[0])));
-  player.x = player.tx = (a[1] + (b[1] - a[1]) * mix) * W;
-  player.y = player.ty = (a[2] + (b[2] - a[2]) * mix) * H;
+  player.x = player.tx = offsetX + (a[1] + (b[1] - a[1]) * mix) * demoReplay.widthUnits * scale;
+  player.y = player.ty = offsetY + (a[2] + (b[2] - a[2]) * mix) * demoReplay.heightUnits * scale;
 
   while (demoReplay.spawnIndex < demoReplay.spawns.length && demoReplay.spawns[demoReplay.spawnIndex].at <= elapsed) {
     const e = demoReplay.spawns[demoReplay.spawnIndex++];
     enemies.push({
-      x: e.x * W, y: e.y * H, vx: e.vx * U, vy: e.vy * U, r: e.r * U,
+      x: offsetX + e.x * demoReplay.widthUnits * scale,
+      y: offsetY + e.y * demoReplay.heightUnits * scale,
+      vx: e.vx * scale, vy: e.vy * scale, r: e.r * scale,
       dart: e.dart, burst: e.burst, born: t, warning: 0.5,
     });
   }
 
-  const m = 10 * U;
+  const m = 10 * scale;
   for (const e of enemies) {
     e.x += e.vx * dt; e.y += e.vy * dt;
     e.warning = Math.max(0, (e.warning || 0) - dt);
@@ -685,7 +716,8 @@ function draw(now) {
       ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.fill();
     }
 
-    ctx.beginPath(); ctx.arc(player.x, player.y, CFG.playerRadius * U, 0, Math.PI * 2);
+    const playerScale = demoReplay?.scale || U;
+    ctx.beginPath(); ctx.arc(player.x, player.y, CFG.playerRadius * playerScale, 0, Math.PI * 2);
     ctx.fillStyle = '#5ef2c2'; ctx.shadowColor = '#5ef2c2'; ctx.shadowBlur = 18; ctx.fill(); ctx.shadowBlur = 0;
   }
   if (sandbox && state === 'play') drawSandbox();

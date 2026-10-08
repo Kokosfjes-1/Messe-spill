@@ -29,8 +29,10 @@ Use **Ta opp demo** to start a real run while recording player positions and
 enemy spawns at 30 samples per second. The recording is saved in localStorage
 when the player is hit or **Stopp og lagre** is pressed. Automatic and manual
 demo mode replay the saved run exactly; the automatic AI remains the fallback
-until a recording exists. The other test-only button starts or stops the demo
-immediately.
+until a recording exists. Recordings preserve their original aspect ratio and
+game-unit scale when replayed at another resolution. V1 recordings infer that
+information from their edge spawns; new V2 recordings store it explicitly. The
+other test-only button starts or stops the demo immediately.
 
 Press **Eksporter demo** to download the active recording as
 `demo-recording.json`. To bundle it permanently with the test site, place that
@@ -39,7 +41,7 @@ loads the bundled file when the browser has no local recording. Commit
 that JSON file with the site to make the recording available on other devices.
 
 The slow-motion power and its fuel HUD have been removed. Sandbox pause uses
-**Space**. The current test build is marked **V0.112** in the bottom-right corner.
+**Space**. The current test build is marked **V0.113** in the bottom-right corner.
 
 1. Edit `test/index.html` and test locally. Push those changes to publish the
    test version alongside the current production game when ready.
